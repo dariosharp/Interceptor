@@ -64,6 +64,7 @@ const state = {
   historyColumns: { ...DEFAULT_HISTORY_COLUMNS },
   urlMenuTargetId: null,
   blockedUrls: new Set(),
+  interceptUrls: new Set(),
   interceptPollId: null,
   pausedInterceptId: null
 };
@@ -78,11 +79,14 @@ const els = {
   searchInput: document.querySelector("#searchInput"),
   extensionFilterList: document.querySelector("#extensionFilterList"),
   historyTable: document.querySelector("#historyTable"),
+  interceptListPane: document.querySelector("#interceptListPane"),
+  interceptUrlList: document.querySelector("#interceptUrlList"),
   requestList: document.querySelector("#requestList"),
   historySortButtons: Array.from(document.querySelectorAll(".history-sort")),
   columnResizers: Array.from(document.querySelectorAll(".column-resizer")),
   highlightMenu: document.querySelector("#highlightMenu"),
   urlMenu: document.querySelector("#urlMenu"),
+  urlInterceptAction: document.querySelector("#urlInterceptAction"),
   urlBlockAction: document.querySelector("#urlBlockAction"),
   workspace: document.querySelector(".workspace"),
   workspaceResizeHandle: document.querySelector("#workspaceResizeHandle"),
@@ -192,6 +196,8 @@ els.urlMenu.addEventListener("click", async (event) => {
     await copyText(entry.request.url);
   } else if (button.dataset.action === "delete") {
     deleteHistoryEntry(entry.id);
+  } else if (button.dataset.action === "intercept" || button.dataset.action === "unintercept") {
+    await toggleHistoryEntryUrlIntercept(entry.request.url);
   } else if (button.dataset.action === "block" || button.dataset.action === "unblock") {
     await toggleHistoryEntryUrlBlock(entry.request.url);
   }
@@ -269,28 +275,11 @@ els.sendRequest.addEventListener("click", async () => {
 });
 
 els.interceptForward.addEventListener("click", async () => {
-  try {
-    await sendRuntimeMessage({
-      type: "intercept:forward",
-      tabId: state.inspectedTabId,
-      rawRequest: els.interceptRequest.value
-    });
-    clearInterceptEditor("Forwarded. Waiting for request");
-  } catch (error) {
-    els.interceptStatus.textContent = error.message || String(error);
-  }
+  await forwardCurrentIntercept();
 });
 
 els.interceptDrop.addEventListener("click", async () => {
-  try {
-    await sendRuntimeMessage({
-      type: "intercept:drop",
-      tabId: state.inspectedTabId
-    });
-    clearInterceptEditor("Dropped. Waiting for request");
-  } catch (error) {
-    els.interceptStatus.textContent = error.message || String(error);
-  }
+  await dropCurrentIntercept();
 });
 
 els.repeaterRequest.addEventListener("input", syncActiveRepeaterTab);
@@ -303,14 +292,26 @@ els.detailResizeHandle.addEventListener("pointerdown", startDetailResize);
 els.detailResizeHandle.addEventListener("keydown", resizeDetailWithKeyboard);
 
 for (const tab of els.tabs) {
-  tab.addEventListener("click", () => switchView(tab.dataset.view));
+  tab.addEventListener("click", () => {
+    if (state.mode === "intercept") {
+      if (tab.dataset.view === "detail") {
+        forwardCurrentIntercept();
+      } else {
+        dropCurrentIntercept();
+      }
+      return;
+    }
+    switchView(tab.dataset.view);
+  });
 }
 
 async function setMode(mode) {
   state.mode = mode;
+  document.querySelector(".app").classList.toggle("intercept-mode", mode === "intercept");
   els.modeSelect.value = mode;
   state.capturing = mode === "capturing";
   els.toggleCapture.textContent = state.capturing ? "Pause" : "Resume";
+  renderModeLayout();
 
   if (mode === "intercept") {
     await startInterceptMode();
@@ -326,13 +327,38 @@ async function setMode(mode) {
 
 async function startInterceptMode() {
   clearInterceptEditor("Waiting for request");
-  await sendRuntimeMessage({ type: "intercept:start", tabId: state.inspectedTabId });
+  await sendRuntimeMessage({
+    type: "intercept:start",
+    tabId: state.inspectedTabId,
+    urls: Array.from(state.interceptUrls)
+  });
 
   if (state.interceptPollId) {
     window.clearInterval(state.interceptPollId);
   }
   state.interceptPollId = window.setInterval(pollIntercept, 500);
   await pollIntercept();
+}
+
+function renderModeLayout() {
+  const interceptMode = state.mode === "intercept";
+  document.querySelector(".filters").hidden = interceptMode;
+  els.historyTable.hidden = interceptMode;
+  els.interceptListPane.hidden = !interceptMode;
+
+  els.tabs[0].textContent = interceptMode ? "Forward" : "History";
+  els.tabs[1].textContent = interceptMode ? "Drop" : "Repeater";
+
+  if (interceptMode) {
+    for (const tab of els.tabs) {
+      tab.classList.remove("active");
+    }
+  } else {
+    for (const tab of els.tabs) {
+      tab.classList.toggle("active", tab.dataset.view === state.activeView);
+    }
+  }
+  renderInterceptUrlList();
 }
 
 async function stopInterceptMode() {
@@ -362,8 +388,9 @@ async function pollIntercept() {
   }
 
   state.pausedInterceptId = result.paused.id;
-  els.interceptStatus.textContent = `${result.paused.method} ${result.paused.url}`;
-  els.interceptRequest.value = result.paused.rawRequest;
+  const stage = result.paused.stage === "response" ? "Response" : "Request";
+  els.interceptStatus.textContent = `${stage}: ${result.paused.method} ${result.paused.url}`;
+  els.interceptRequest.value = result.paused.rawMessage;
 }
 
 function normalizeHarEntry(harEntry, content, encoding) {
@@ -453,7 +480,7 @@ function renderHistory() {
     status.textContent = entry.response.status || "-";
 
     const url = document.createElement("span");
-    url.className = `url${state.blockedUrls.has(entry.request.url) ? " blocked-url" : ""}`;
+    url.className = historyUrlClass(entry.request.url);
     url.title = entry.request.url;
     url.textContent = entry.request.url;
 
@@ -590,6 +617,17 @@ function historyRowClass(entry) {
   return classes.join(" ");
 }
 
+function historyUrlClass(url) {
+  const classes = ["url"];
+  if (state.blockedUrls.has(url)) {
+    classes.push("blocked-url");
+  }
+  if (state.interceptUrls.has(url)) {
+    classes.push("intercepted-url");
+  }
+  return classes.join(" ");
+}
+
 function showHighlightMenu(clientX, clientY) {
   els.highlightMenu.hidden = false;
   const rect = els.highlightMenu.getBoundingClientRect();
@@ -607,6 +645,9 @@ function hideHighlightMenu() {
 function showUrlMenu(clientX, clientY) {
   const entry = state.entries.find((candidate) => candidate.id === state.urlMenuTargetId);
   const blocked = entry ? state.blockedUrls.has(entry.request.url) : false;
+  const intercepted = entry ? state.interceptUrls.has(entry.request.url) : false;
+  els.urlInterceptAction.dataset.action = intercepted ? "unintercept" : "intercept";
+  els.urlInterceptAction.textContent = intercepted ? "Remove Intercept" : "Intercept";
   els.urlBlockAction.dataset.action = blocked ? "unblock" : "block";
   els.urlBlockAction.textContent = blocked ? "Unblock" : "Block";
 
@@ -657,6 +698,49 @@ async function toggleHistoryEntryUrlBlock(url) {
     state.blockedUrls.add(url);
   }
   renderHistory();
+}
+
+async function toggleHistoryEntryUrlIntercept(url) {
+  if (state.interceptUrls.has(url)) {
+    state.interceptUrls.delete(url);
+  } else {
+    state.interceptUrls.add(url);
+  }
+
+  renderHistory();
+  renderInterceptUrlList();
+  if (state.mode === "intercept") {
+    await sendRuntimeMessage({
+      type: "intercept:setUrls",
+      tabId: state.inspectedTabId,
+      urls: Array.from(state.interceptUrls)
+    }).catch(() => {});
+  }
+}
+
+function renderInterceptUrlList() {
+  els.interceptUrlList.replaceChildren(...Array.from(state.interceptUrls).map((url) => {
+    const item = document.createElement("li");
+    const row = document.createElement("div");
+    row.className = "intercept-url-row";
+
+    const text = document.createElement("span");
+    text.title = url;
+    text.textContent = url;
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "remove-intercept-url";
+    remove.title = "Remove intercept URL";
+    remove.textContent = "x";
+    remove.addEventListener("click", async () => {
+      await toggleHistoryEntryUrlIntercept(url);
+    });
+
+    row.append(text, remove);
+    item.append(row);
+    return item;
+  }));
 }
 
 function formatHistoryTime(value) {
@@ -1046,6 +1130,31 @@ async function sendRuntimeMessage(message) {
   return result;
 }
 
+async function forwardCurrentIntercept() {
+  try {
+    await sendRuntimeMessage({
+      type: "intercept:forward",
+      tabId: state.inspectedTabId,
+      rawMessage: els.interceptRequest.value
+    });
+    clearInterceptEditor("Forwarded. Waiting for request");
+  } catch (error) {
+    els.interceptStatus.textContent = error.message || String(error);
+  }
+}
+
+async function dropCurrentIntercept() {
+  try {
+    await sendRuntimeMessage({
+      type: "intercept:drop",
+      tabId: state.inspectedTabId
+    });
+    clearInterceptEditor("Dropped. Waiting for request");
+  } catch (error) {
+    els.interceptStatus.textContent = error.message || String(error);
+  }
+}
+
 function clearInterceptEditor(status) {
   state.pausedInterceptId = null;
   els.interceptStatus.textContent = status;
@@ -1078,6 +1187,7 @@ function downloadProject() {
     sort: state.sort,
     hiddenExtensions: Array.from(state.hiddenExtensions),
     blockedUrls: Array.from(state.blockedUrls),
+    interceptUrls: Array.from(state.interceptUrls),
     historyPaneSize: state.historyPaneSize,
     detailRequestPaneSize: state.detailRequestPaneSize,
     historyColumns: state.historyColumns,
@@ -1124,6 +1234,7 @@ async function uploadProject(event) {
       ? new Set(project.hiddenExtensions.filter((extension) => FILTER_EXTENSIONS.includes(extension)))
       : new Set(DEFAULT_HIDDEN_EXTENSIONS);
     state.blockedUrls = Array.isArray(project.blockedUrls) ? new Set(project.blockedUrls) : new Set();
+    state.interceptUrls = Array.isArray(project.interceptUrls) ? new Set(project.interceptUrls) : new Set();
     state.historyPaneSize = typeof project.historyPaneSize === "string" ? project.historyPaneSize : null;
     state.detailRequestPaneSize = typeof project.detailRequestPaneSize === "string" ? project.detailRequestPaneSize : null;
     state.historyColumns = normalizeProjectHistoryColumns(project.historyColumns);
@@ -1140,6 +1251,7 @@ async function uploadProject(event) {
 
     renderHistory();
     renderExtensionFilters();
+    renderInterceptUrlList();
     applyLayoutSizes();
     renderDetail();
     renderRepeater();

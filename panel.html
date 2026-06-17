@@ -60,6 +60,10 @@
             </div>
             <ol id="requestList" class="request-list"></ol>
           </div>
+          <div id="interceptListPane" class="intercept-list-pane" hidden>
+            <div class="intercept-list-head">Intercept</div>
+            <ol id="interceptUrlList" class="intercept-url-list"></ol>
+          </div>
         </aside>
 
         <div id="workspaceResizeHandle" class="workspace-resize-handle" role="separator" aria-orientation="vertical" tabindex="0"></div>
@@ -141,6 +145,7 @@
       <div id="urlMenu" class="url-menu" hidden>
         <button type="button" data-action="copy">Copy</button>
         <button type="button" data-action="delete">Delete</button>
+        <button id="urlInterceptAction" type="button" data-action="intercept">Intercept</button>
         <button id="urlBlockAction" type="button" data-action="block">Block</button>
       </div>
     </main>

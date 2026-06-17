@@ -15,28 +15,46 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
     return;
   }
 
-  const session = interceptSessions.get(source.tabId);
-  if (!session || !session.enabled) {
-    continuePausedRequest(source.tabId, params.requestId);
-    return;
-  }
-
-  if (session.paused) {
-    continuePausedRequest(source.tabId, params.requestId);
-    return;
-  }
-
-  session.paused = {
-    requestId: params.requestId,
-    request: params.request,
-    resourceType: params.resourceType,
-    createdAt: Date.now()
-  };
+  handlePausedRequest(source, params);
 });
 
 chrome.debugger.onDetach.addListener((source) => {
   interceptSessions.delete(source.tabId);
 });
+
+async function handlePausedRequest(source, params) {
+  const session = interceptSessions.get(source.tabId);
+  if (!session || !session.enabled) {
+    await continuePausedRequest(source.tabId, params.requestId);
+    return;
+  }
+
+  if (!shouldInterceptUrl(session, params.request.url)) {
+    await continuePausedRequest(source.tabId, params.requestId);
+    return;
+  }
+
+  if (session.paused) {
+    await continuePausedRequest(source.tabId, params.requestId);
+    return;
+  }
+
+  const responseBody = params.responseStatusCode
+    ? await getResponseBody(source.tabId, params.requestId)
+    : null;
+
+  session.paused = {
+    requestId: params.requestId,
+    stage: params.responseStatusCode ? "response" : "request",
+    request: params.request,
+    responseStatusCode: params.responseStatusCode,
+    responseStatusText: params.responseStatusText,
+    responseHeaders: params.responseHeaders || [],
+    responseBody,
+    resourceType: params.resourceType,
+    createdAt: Date.now()
+  };
+}
 
 async function handleMessage(message) {
   if (!message || !message.type) {
@@ -58,7 +76,12 @@ async function handleMessage(message) {
   }
 
   if (message.type === "intercept:start") {
-    await startIntercept(message.tabId);
+    await startIntercept(message.tabId, message.urls);
+    return {};
+  }
+
+  if (message.type === "intercept:setUrls") {
+    setInterceptUrls(message.tabId, message.urls);
     return {};
   }
 
@@ -72,7 +95,7 @@ async function handleMessage(message) {
   }
 
   if (message.type === "intercept:forward") {
-    await forwardIntercept(message.tabId, message.rawRequest);
+    await forwardIntercept(message.tabId, message.rawMessage || message.rawRequest);
     return {};
   }
 
@@ -149,20 +172,35 @@ function exactUrlRegex(url) {
   return `^${url.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`;
 }
 
-async function startIntercept(tabId) {
+async function startIntercept(tabId, urls) {
   const target = debuggerTarget(tabId);
   let session = interceptSessions.get(tabId);
 
   if (!session) {
     await chrome.debugger.attach(target, DEBUGGER_VERSION);
-    session = { enabled: true, attached: true, paused: null };
+    session = { enabled: true, attached: true, paused: null, urls: new Set(urls || []) };
     interceptSessions.set(tabId, session);
   }
 
   session.enabled = true;
+  session.urls = new Set(urls || []);
   await chrome.debugger.sendCommand(target, "Fetch.enable", {
-    patterns: [{ urlPattern: "*", requestStage: "Request" }]
+    patterns: [
+      { urlPattern: "*", requestStage: "Request" },
+      { urlPattern: "*", requestStage: "Response" }
+    ]
   });
+}
+
+function setInterceptUrls(tabId, urls) {
+  const session = interceptSessions.get(tabId);
+  if (session) {
+    session.urls = new Set(urls || []);
+  }
+}
+
+function shouldInterceptUrl(session, url) {
+  return !session.urls?.size || session.urls.has(url);
 }
 
 async function stopIntercept(tabId) {
@@ -188,21 +226,28 @@ function getPausedIntercept(tabId) {
 
   return {
     id: paused.requestId,
-    rawRequest: formatPausedRequest(paused.request),
+    stage: paused.stage,
+    rawMessage: paused.stage === "response" ? formatPausedResponse(paused) : formatPausedRequest(paused.request),
     url: paused.request.url,
     method: paused.request.method,
     resourceType: paused.resourceType
   };
 }
 
-async function forwardIntercept(tabId, rawRequest) {
+async function forwardIntercept(tabId, rawMessage) {
   const session = interceptSessions.get(tabId);
   if (!session?.paused) {
     return;
   }
 
   const paused = session.paused;
-  const parsed = parseRawRequest(rawRequest, paused.request.url);
+  if (paused.stage === "response") {
+    await fulfillPausedResponse(tabId, paused, rawMessage);
+    session.paused = null;
+    return;
+  }
+
+  const parsed = parseRawRequest(rawMessage, paused.request.url);
   const params = {
     requestId: paused.requestId,
     url: parsed.url,
@@ -216,6 +261,17 @@ async function forwardIntercept(tabId, rawRequest) {
 
   session.paused = null;
   await chrome.debugger.sendCommand(debuggerTarget(tabId), "Fetch.continueRequest", params);
+}
+
+async function fulfillPausedResponse(tabId, paused, rawResponse) {
+  const parsed = parseRawResponse(rawResponse);
+  await chrome.debugger.sendCommand(debuggerTarget(tabId), "Fetch.fulfillRequest", {
+    requestId: paused.requestId,
+    responseCode: parsed.status,
+    responsePhrase: parsed.statusText,
+    responseHeaders: Object.entries(parsed.headers).map(([name, value]) => ({ name, value })),
+    body: btoa(unescape(encodeURIComponent(parsed.body)))
+  });
 }
 
 async function dropIntercept(tabId) {
@@ -254,6 +310,39 @@ function formatPausedRequest(request) {
   }
 
   return `${request.method} ${path || "/"} HTTP/1.1\n${formatHeaders(headers)}\n\n${request.postData || ""}`;
+}
+
+function formatPausedResponse(paused) {
+  const headers = {};
+  for (const header of paused.responseHeaders || []) {
+    headers[header.name] = header.value;
+  }
+  const body = decodeResponseBody(paused.responseBody);
+  const status = paused.responseStatusCode || 200;
+  const statusText = paused.responseStatusText || "";
+  return `HTTP/1.1 ${status} ${statusText}`.trim() + `\n${formatHeaders(headers)}\n\n${body}`;
+}
+
+async function getResponseBody(tabId, requestId) {
+  try {
+    return await chrome.debugger.sendCommand(debuggerTarget(tabId), "Fetch.getResponseBody", { requestId });
+  } catch (_error) {
+    return { body: "", base64Encoded: false };
+  }
+}
+
+function decodeResponseBody(responseBody) {
+  if (!responseBody?.body) {
+    return "";
+  }
+  if (!responseBody.base64Encoded) {
+    return responseBody.body;
+  }
+  try {
+    return decodeURIComponent(escape(atob(responseBody.body)));
+  } catch (_error) {
+    return responseBody.body;
+  }
 }
 
 async function sendRepeaterRequest(request) {
@@ -362,6 +451,43 @@ function parseRawRequest(rawText, baseUrl) {
   };
 }
 
+function parseRawResponse(rawText) {
+  const normalized = rawText.replace(/\r\n/g, "\n");
+  const separator = normalized.indexOf("\n\n");
+  const head = separator >= 0 ? normalized.slice(0, separator) : normalized;
+  const body = separator >= 0 ? normalized.slice(separator + 2) : "";
+  const lines = head.split("\n").filter(Boolean);
+  const statusLine = lines.shift();
+
+  if (!statusLine) {
+    throw new Error("Response status line is required.");
+  }
+
+  const match = statusLine.match(/^HTTP\/\S+\s+(\d{3})(?:\s+(.*))?$/i);
+  if (!match) {
+    throw new Error("Response status line must look like: HTTP/1.1 200 OK");
+  }
+
+  const headers = {};
+  for (const line of lines) {
+    const colon = line.indexOf(":");
+    if (colon <= 0) {
+      throw new Error(`Invalid header: ${line}`);
+    }
+    const name = line.slice(0, colon).trim();
+    if (!isForbiddenResponseHeader(name)) {
+      headers[name] = line.slice(colon + 1).trim();
+    }
+  }
+
+  return {
+    status: Number(match[1]),
+    statusText: match[2] || "",
+    headers,
+    body
+  };
+}
+
 function findHeader(headers, wantedName) {
   const match = Object.keys(headers).find((name) => name.toLowerCase() === wantedName);
   return match ? headers[match] : "";
@@ -400,4 +526,9 @@ function isForbiddenRequestHeader(name) {
     "upgrade",
     "via"
   ].includes(normalized) || normalized.startsWith("proxy-") || normalized.startsWith("sec-");
+}
+
+function isForbiddenResponseHeader(name) {
+  const normalized = name.toLowerCase();
+  return ["content-length", "transfer-encoding", "content-encoding"].includes(normalized);
 }
