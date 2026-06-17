@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Interceptor",
+  "description": "A lightweight DevTools request history and repeater for authorized web application testing.",
+  "version": "0.1.0",
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "devtools_page": "devtools.html",
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Interceptor"
+  }
+}

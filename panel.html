@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Interceptor</title>
+    <link rel="stylesheet" href="panel.css">
+  </head>
+  <body>
+    <main class="app">
+      <header class="toolbar">
+        <div class="brand">
+          <strong>Interceptor</strong>
+          <span id="captureState">Capturing</span>
+        </div>
+        <div class="toolbar-actions">
+          <button id="downloadProject" type="button" title="Download captured history and repeater tabs">Download Project</button>
+          <button id="uploadProject" type="button" title="Upload a saved Interceptor project">Upload Project</button>
+          <button id="toggleCapture" type="button" title="Pause or resume capture">Pause</button>
+          <button id="clearHistory" type="button" title="Clear request history">Clear</button>
+          <input id="projectFile" type="file" accept="application/json,.json">
+        </div>
+      </header>
+
+      <section class="workspace">
+        <aside class="history-pane" aria-label="Request history">
+          <div class="filters">
+            <input id="searchInput" type="search" placeholder="Filter URL, method, status">
+          </div>
+          <div class="history-head">
+            <span>Method</span>
+            <span>Status</span>
+            <span>URL</span>
+          </div>
+          <ol id="requestList" class="request-list"></ol>
+        </aside>
+
+        <section class="detail-pane" aria-label="Request detail">
+          <div class="tabs" role="tablist">
+            <button class="tab active" data-view="detail" type="button">History</button>
+            <button class="tab" data-view="repeater" type="button">Repeater</button>
+          </div>
+
+          <section id="detailView" class="view active">
+            <div class="split">
+              <section class="editor-block">
+                <div class="block-head">
+                  <strong>Request</strong>
+                  <button id="sendToRepeater" type="button">Send to Repeater</button>
+                </div>
+                <textarea id="requestText" spellcheck="false" readonly></textarea>
+              </section>
+              <section class="editor-block">
+                <div class="block-head">
+                  <strong>Response</strong>
+                  <span id="responseMeta"></span>
+                </div>
+                <textarea id="responseText" spellcheck="false" readonly></textarea>
+              </section>
+            </div>
+          </section>
+
+          <section id="repeaterView" class="view">
+            <div class="repeater-shell">
+              <div class="repeater-tabs">
+                <div id="repeaterTabList" class="repeater-tab-list" role="tablist"></div>
+              </div>
+              <div id="emptyRepeater" class="empty-state">Send a history item to Repeater to create a tab.</div>
+              <div id="repeaterEditors" class="split">
+                <section class="editor-block">
+                  <div class="block-head">
+                    <strong>Editable Request</strong>
+                    <button id="sendRequest" type="button">Send</button>
+                  </div>
+                  <textarea id="repeaterRequest" spellcheck="false"></textarea>
+                </section>
+                <section class="editor-block">
+                  <div class="block-head">
+                    <strong>Repeater Response</strong>
+                    <span id="repeaterMeta"></span>
+                  </div>
+                  <textarea id="repeaterResponse" spellcheck="false" readonly></textarea>
+                </section>
+              </div>
+            </div>
+          </section>
+        </section>
+      </section>
+    </main>
+    <script src="panel.js"></script>
+  </body>
+</html>
