@@ -11,7 +11,11 @@
       <header class="toolbar">
         <div class="brand">
           <strong>Interceptor</strong>
-          <span id="captureState">Capturing</span>
+          <select id="modeSelect" title="Capture mode">
+            <option value="capturing">Capturing</option>
+            <option value="paused">Paused</option>
+            <option value="intercept">Intercept</option>
+          </select>
         </div>
         <div class="toolbar-actions">
           <button id="downloadProject" type="button" title="Download captured history and repeater tabs">Download Project</button>
@@ -31,15 +35,34 @@
               <div id="extensionFilterList" class="extension-filter-list"></div>
             </details>
           </div>
-          <div class="history-head">
-            <button class="history-sort" type="button" data-sort="sequenceId">ID</button>
-            <button class="history-sort" type="button" data-sort="method">Method</button>
-            <button class="history-sort" type="button" data-sort="status">Status</button>
-            <button class="history-sort" type="button" data-sort="url">URL</button>
-            <button class="history-sort" type="button" data-sort="timestamp">Time</button>
+          <div id="historyTable" class="history-table">
+            <div class="history-head">
+              <div class="history-cell">
+                <button class="history-sort" type="button" data-sort="sequenceId">ID</button>
+                <button class="column-resizer" type="button" data-column="sequenceId" title="Resize ID column">|</button>
+              </div>
+              <div class="history-cell">
+                <button class="history-sort" type="button" data-sort="method">Method</button>
+                <button class="column-resizer" type="button" data-column="method" title="Resize Method column">|</button>
+              </div>
+              <div class="history-cell">
+                <button class="history-sort" type="button" data-sort="status">Status</button>
+                <button class="column-resizer" type="button" data-column="status" title="Resize Status column">|</button>
+              </div>
+              <div class="history-cell">
+                <button class="history-sort" type="button" data-sort="url">URL</button>
+                <button class="column-resizer" type="button" data-column="url" title="Resize URL column">|</button>
+              </div>
+              <div class="history-cell">
+                <button class="history-sort" type="button" data-sort="timestamp">Time</button>
+                <button class="column-resizer" type="button" data-column="timestamp" title="Resize Time column">|</button>
+              </div>
+            </div>
+            <ol id="requestList" class="request-list"></ol>
           </div>
-          <ol id="requestList" class="request-list"></ol>
         </aside>
+
+        <div id="workspaceResizeHandle" class="workspace-resize-handle" role="separator" aria-orientation="vertical" tabindex="0"></div>
 
         <section class="detail-pane" aria-label="Request detail">
           <div class="tabs" role="tablist">
@@ -48,7 +71,7 @@
           </div>
 
           <section id="detailView" class="view active">
-            <div class="split">
+            <div id="detailSplit" class="split">
               <section class="editor-block">
                 <div class="block-head">
                   <strong>Request</strong>
@@ -56,6 +79,7 @@
                 </div>
                 <textarea id="requestText" spellcheck="false" readonly></textarea>
               </section>
+              <div id="detailResizeHandle" class="resize-handle" role="separator" aria-orientation="horizontal" tabindex="0"></div>
               <section class="editor-block">
                 <div class="block-head">
                   <strong>Response</strong>
@@ -91,6 +115,19 @@
               </div>
             </div>
           </section>
+
+          <section id="interceptView" class="view">
+            <div class="intercept-shell">
+              <div class="intercept-bar">
+                <strong id="interceptStatus">Waiting for request</strong>
+                <div class="intercept-actions">
+                  <button id="interceptForward" type="button">Forward</button>
+                  <button id="interceptDrop" type="button">Drop</button>
+                </div>
+              </div>
+              <textarea id="interceptRequest" spellcheck="false"></textarea>
+            </div>
+          </section>
         </section>
       </section>
       <div id="highlightMenu" class="highlight-menu" hidden>
@@ -100,6 +137,11 @@
         <button type="button" data-color="blue">Blue</button>
         <button type="button" data-color="green">Green</button>
         <button type="button" data-color="purple">Purple</button>
+      </div>
+      <div id="urlMenu" class="url-menu" hidden>
+        <button type="button" data-action="copy">Copy</button>
+        <button type="button" data-action="delete">Delete</button>
+        <button type="button" data-action="block">Block</button>
       </div>
     </main>
     <script src="panel.js"></script>

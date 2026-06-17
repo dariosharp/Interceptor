@@ -28,9 +28,25 @@ const DEFAULT_HIDDEN_EXTENSIONS = new Set([
   "ttf",
   "svg"
 ]);
+const DEFAULT_HISTORY_COLUMNS = {
+  sequenceId: 56,
+  method: 72,
+  status: 64,
+  url: 360,
+  timestamp: 74
+};
+const MIN_HISTORY_COLUMNS = {
+  sequenceId: 44,
+  method: 58,
+  status: 54,
+  url: 180,
+  timestamp: 64
+};
 
 const state = {
+  inspectedTabId: chrome.devtools.inspectedWindow.tabId,
   capturing: true,
+  mode: "capturing",
   entries: [],
   selectedId: null,
   activeView: "detail",
@@ -42,11 +58,17 @@ const state = {
     direction: "desc"
   },
   hiddenExtensions: new Set(DEFAULT_HIDDEN_EXTENSIONS),
-  highlightTargetId: null
+  highlightTargetId: null,
+  historyPaneSize: null,
+  detailRequestPaneSize: null,
+  historyColumns: { ...DEFAULT_HISTORY_COLUMNS },
+  urlMenuTargetId: null,
+  interceptPollId: null,
+  pausedInterceptId: null
 };
 
 const els = {
-  captureState: document.querySelector("#captureState"),
+  modeSelect: document.querySelector("#modeSelect"),
   downloadProject: document.querySelector("#downloadProject"),
   uploadProject: document.querySelector("#uploadProject"),
   projectFile: document.querySelector("#projectFile"),
@@ -54,9 +76,16 @@ const els = {
   clearHistory: document.querySelector("#clearHistory"),
   searchInput: document.querySelector("#searchInput"),
   extensionFilterList: document.querySelector("#extensionFilterList"),
+  historyTable: document.querySelector("#historyTable"),
   requestList: document.querySelector("#requestList"),
   historySortButtons: Array.from(document.querySelectorAll(".history-sort")),
+  columnResizers: Array.from(document.querySelectorAll(".column-resizer")),
   highlightMenu: document.querySelector("#highlightMenu"),
+  urlMenu: document.querySelector("#urlMenu"),
+  workspace: document.querySelector(".workspace"),
+  workspaceResizeHandle: document.querySelector("#workspaceResizeHandle"),
+  detailSplit: document.querySelector("#detailSplit"),
+  detailResizeHandle: document.querySelector("#detailResizeHandle"),
   requestText: document.querySelector("#requestText"),
   responseText: document.querySelector("#responseText"),
   responseMeta: document.querySelector("#responseMeta"),
@@ -69,10 +98,15 @@ const els = {
   repeaterResponse: document.querySelector("#repeaterResponse"),
   repeaterMeta: document.querySelector("#repeaterMeta"),
   sendRequest: document.querySelector("#sendRequest"),
+  interceptStatus: document.querySelector("#interceptStatus"),
+  interceptForward: document.querySelector("#interceptForward"),
+  interceptDrop: document.querySelector("#interceptDrop"),
+  interceptRequest: document.querySelector("#interceptRequest"),
   tabs: Array.from(document.querySelectorAll(".tab")),
   views: {
     detail: document.querySelector("#detailView"),
-    repeater: document.querySelector("#repeaterView")
+    repeater: document.querySelector("#repeaterView"),
+    intercept: document.querySelector("#interceptView")
   }
 };
 
@@ -98,9 +132,11 @@ chrome.devtools.network.onRequestFinished.addListener((harEntry) => {
 });
 
 els.toggleCapture.addEventListener("click", () => {
-  state.capturing = !state.capturing;
-  els.captureState.textContent = state.capturing ? "Capturing" : "Paused";
-  els.toggleCapture.textContent = state.capturing ? "Pause" : "Resume";
+  setMode(state.mode === "capturing" ? "paused" : "capturing");
+});
+
+els.modeSelect.addEventListener("change", () => {
+  setMode(els.modeSelect.value);
 });
 
 els.clearHistory.addEventListener("click", () => {
@@ -119,6 +155,11 @@ for (const button of els.historySortButtons) {
   });
 }
 
+for (const handle of els.columnResizers) {
+  handle.addEventListener("pointerdown", startColumnResize);
+  handle.addEventListener("click", (event) => event.stopPropagation());
+}
+
 els.highlightMenu.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-color]");
   if (!button || !state.highlightTargetId) {
@@ -133,10 +174,37 @@ els.highlightMenu.addEventListener("click", (event) => {
   hideHighlightMenu();
 });
 
-document.addEventListener("click", hideHighlightMenu);
+els.urlMenu.addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-action]");
+  if (!button || !state.urlMenuTargetId) {
+    return;
+  }
+
+  const entry = state.entries.find((candidate) => candidate.id === state.urlMenuTargetId);
+  if (!entry) {
+    hideUrlMenu();
+    return;
+  }
+
+  if (button.dataset.action === "copy") {
+    await copyText(entry.request.url);
+  } else if (button.dataset.action === "delete") {
+    deleteHistoryEntry(entry.id);
+  } else if (button.dataset.action === "block") {
+    await blockHistoryEntryUrl(entry.request.url);
+  }
+
+  hideUrlMenu();
+});
+
+document.addEventListener("click", () => {
+  hideHighlightMenu();
+  hideUrlMenu();
+});
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     hideHighlightMenu();
+    hideUrlMenu();
   }
 });
 
@@ -198,13 +266,102 @@ els.sendRequest.addEventListener("click", async () => {
   renderRepeaterEditors();
 });
 
+els.interceptForward.addEventListener("click", async () => {
+  try {
+    await sendRuntimeMessage({
+      type: "intercept:forward",
+      tabId: state.inspectedTabId,
+      rawRequest: els.interceptRequest.value
+    });
+    clearInterceptEditor("Forwarded. Waiting for request");
+  } catch (error) {
+    els.interceptStatus.textContent = error.message || String(error);
+  }
+});
+
+els.interceptDrop.addEventListener("click", async () => {
+  try {
+    await sendRuntimeMessage({
+      type: "intercept:drop",
+      tabId: state.inspectedTabId
+    });
+    clearInterceptEditor("Dropped. Waiting for request");
+  } catch (error) {
+    els.interceptStatus.textContent = error.message || String(error);
+  }
+});
+
 els.repeaterRequest.addEventListener("input", syncActiveRepeaterTab);
 
 els.repeaterResizeHandle.addEventListener("pointerdown", startRepeaterResize);
 els.repeaterResizeHandle.addEventListener("keydown", resizeRepeaterWithKeyboard);
+els.workspaceResizeHandle.addEventListener("pointerdown", startWorkspaceResize);
+els.workspaceResizeHandle.addEventListener("keydown", resizeWorkspaceWithKeyboard);
+els.detailResizeHandle.addEventListener("pointerdown", startDetailResize);
+els.detailResizeHandle.addEventListener("keydown", resizeDetailWithKeyboard);
 
 for (const tab of els.tabs) {
   tab.addEventListener("click", () => switchView(tab.dataset.view));
+}
+
+async function setMode(mode) {
+  state.mode = mode;
+  els.modeSelect.value = mode;
+  state.capturing = mode === "capturing";
+  els.toggleCapture.textContent = state.capturing ? "Pause" : "Resume";
+
+  if (mode === "intercept") {
+    await startInterceptMode();
+    switchView("intercept");
+    return;
+  }
+
+  await stopInterceptMode();
+  if (state.activeView === "intercept") {
+    switchView("detail");
+  }
+}
+
+async function startInterceptMode() {
+  clearInterceptEditor("Waiting for request");
+  await sendRuntimeMessage({ type: "intercept:start", tabId: state.inspectedTabId });
+
+  if (state.interceptPollId) {
+    window.clearInterval(state.interceptPollId);
+  }
+  state.interceptPollId = window.setInterval(pollIntercept, 500);
+  await pollIntercept();
+}
+
+async function stopInterceptMode() {
+  if (state.interceptPollId) {
+    window.clearInterval(state.interceptPollId);
+    state.interceptPollId = null;
+  }
+  state.pausedInterceptId = null;
+  await sendRuntimeMessage({ type: "intercept:stop", tabId: state.inspectedTabId }).catch(() => {});
+}
+
+async function pollIntercept() {
+  const result = await sendRuntimeMessage({ type: "intercept:getPaused", tabId: state.inspectedTabId }).catch((error) => {
+    els.interceptStatus.textContent = error.message || String(error);
+    return null;
+  });
+
+  if (!result?.paused) {
+    if (!state.pausedInterceptId) {
+      els.interceptStatus.textContent = "Waiting for request";
+    }
+    return;
+  }
+
+  if (result.paused.id === state.pausedInterceptId) {
+    return;
+  }
+
+  state.pausedInterceptId = result.paused.id;
+  els.interceptStatus.textContent = `${result.paused.method} ${result.paused.url}`;
+  els.interceptRequest.value = result.paused.rawRequest;
 }
 
 function normalizeHarEntry(harEntry, content, encoding) {
@@ -259,6 +416,7 @@ function renderHistory() {
   }).sort(compareHistoryEntries);
 
   updateHistorySortButtons();
+  applyHistoryColumnSizes();
 
   els.requestList.replaceChildren(...visibleEntries.map((entry) => {
     const item = document.createElement("li");
@@ -272,8 +430,13 @@ function renderHistory() {
     });
     button.addEventListener("contextmenu", (event) => {
       event.preventDefault();
-      state.highlightTargetId = entry.id;
-      showHighlightMenu(event.clientX, event.clientY);
+      if (event.target.classList.contains("url")) {
+        state.urlMenuTargetId = entry.id;
+        showUrlMenu(event.clientX, event.clientY);
+      } else {
+        state.highlightTargetId = entry.id;
+        showHighlightMenu(event.clientX, event.clientY);
+      }
     });
 
     const sequence = document.createElement("span");
@@ -318,11 +481,49 @@ function renderExtensionFilters() {
     });
 
     const text = document.createElement("span");
-    text.textContent = `Hide .${extension}`;
+    text.textContent = `.${extension}`;
 
     label.append(checkbox, text);
     return label;
   }));
+}
+
+function applyHistoryColumnSizes() {
+  let totalWidth = 32;
+  for (const [name, width] of Object.entries(state.historyColumns)) {
+    const safeWidth = Math.max(MIN_HISTORY_COLUMNS[name] || 40, Number(width) || DEFAULT_HISTORY_COLUMNS[name]);
+    els.historyTable.style.setProperty(`--history-col-${name}`, `${safeWidth}px`);
+    totalWidth += safeWidth;
+  }
+  els.historyTable.style.setProperty("--history-table-width", `${totalWidth}px`);
+}
+
+function startColumnResize(event) {
+  const column = event.currentTarget.dataset.column;
+  if (!column) {
+    return;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+  event.currentTarget.setPointerCapture(event.pointerId);
+
+  const startX = event.clientX;
+  const startWidth = state.historyColumns[column] || DEFAULT_HISTORY_COLUMNS[column];
+  const minWidth = MIN_HISTORY_COLUMNS[column] || 40;
+
+  const onPointerMove = (moveEvent) => {
+    const nextWidth = Math.max(minWidth, Math.round(startWidth + moveEvent.clientX - startX));
+    state.historyColumns[column] = nextWidth;
+    applyHistoryColumnSizes();
+  };
+  const onPointerUp = () => {
+    document.removeEventListener("pointermove", onPointerMove);
+    document.removeEventListener("pointerup", onPointerUp);
+  };
+
+  document.addEventListener("pointermove", onPointerMove);
+  document.addEventListener("pointerup", onPointerUp, { once: true });
 }
 
 function setHistorySort(key) {
@@ -401,6 +602,49 @@ function hideHighlightMenu() {
   state.highlightTargetId = null;
 }
 
+function showUrlMenu(clientX, clientY) {
+  els.urlMenu.hidden = false;
+  const rect = els.urlMenu.getBoundingClientRect();
+  const left = Math.min(clientX, window.innerWidth - rect.width - 8);
+  const top = Math.min(clientY, window.innerHeight - rect.height - 8);
+  els.urlMenu.style.left = `${Math.max(8, left)}px`;
+  els.urlMenu.style.top = `${Math.max(8, top)}px`;
+}
+
+function hideUrlMenu() {
+  els.urlMenu.hidden = true;
+  state.urlMenuTargetId = null;
+}
+
+async function copyText(value) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.append(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  textarea.remove();
+}
+
+function deleteHistoryEntry(entryId) {
+  state.entries = state.entries.filter((entry) => entry.id !== entryId);
+  if (state.selectedId === entryId) {
+    state.selectedId = state.entries[0]?.id || null;
+    renderDetail();
+  }
+  renderHistory();
+}
+
+async function blockHistoryEntryUrl(url) {
+  await sendRuntimeMessage({ type: "block:add", url });
+}
+
 function formatHistoryTime(value) {
   if (!value) {
     return "-";
@@ -435,6 +679,8 @@ function requestExtension(urlValue) {
 
 function renderDetail() {
   const entry = selectedEntry();
+  els.detailSplit.style.setProperty("--detail-request-pane-size", state.detailRequestPaneSize || "1fr");
+
   if (!entry) {
     els.requestText.value = "";
     els.responseText.value = "";
@@ -658,6 +904,140 @@ function resizeRepeaterWithKeyboard(event) {
   setRepeaterRequestPaneSize(tab, rect.top + next);
 }
 
+function startWorkspaceResize(event) {
+  event.preventDefault();
+  els.workspaceResizeHandle.setPointerCapture(event.pointerId);
+
+  const onPointerMove = (moveEvent) => {
+    setWorkspacePaneSize(moveEvent.clientX, moveEvent.clientY);
+  };
+  const onPointerUp = () => {
+    document.removeEventListener("pointermove", onPointerMove);
+    document.removeEventListener("pointerup", onPointerUp);
+  };
+
+  document.addEventListener("pointermove", onPointerMove);
+  document.addEventListener("pointerup", onPointerUp, { once: true });
+}
+
+function setWorkspacePaneSize(clientX, clientY) {
+  const rect = els.workspace.getBoundingClientRect();
+  const mobile = window.matchMedia("(max-width: 900px)").matches;
+  const minPrimary = 220;
+  const minSecondary = mobile ? 320 : 360;
+  const handleSize = 8;
+
+  if (mobile) {
+    const maxHeight = Math.max(minPrimary, rect.height - handleSize - minSecondary);
+    const nextHeight = Math.min(Math.max(clientY - rect.top, minPrimary), maxHeight);
+    state.historyPaneSize = `${Math.round(nextHeight)}px`;
+    els.workspace.style.setProperty("--history-pane-size", state.historyPaneSize);
+    return;
+  }
+
+  const maxWidth = Math.max(minPrimary, rect.width - handleSize - minSecondary);
+  const nextWidth = Math.min(Math.max(clientX - rect.left, minPrimary), maxWidth);
+  state.historyPaneSize = `${Math.round(nextWidth)}px`;
+  els.workspace.style.setProperty("--history-pane-size", state.historyPaneSize);
+}
+
+function resizeWorkspaceWithKeyboard(event) {
+  if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) {
+    return;
+  }
+
+  event.preventDefault();
+  const rect = els.workspace.getBoundingClientRect();
+  const mobile = window.matchMedia("(max-width: 900px)").matches;
+  const current = parseInt(state.historyPaneSize, 10) || Math.round((mobile ? rect.height : rect.width) * 0.36);
+  const step = event.shiftKey ? 60 : 20;
+  let next = current;
+
+  if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+    next -= step;
+  } else if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+    next += step;
+  } else if (event.key === "Home") {
+    next = 220;
+  } else if (event.key === "End") {
+    next = (mobile ? rect.height : rect.width) - 368;
+  }
+
+  setWorkspacePaneSize(rect.left + next, rect.top + next);
+}
+
+function startDetailResize(event) {
+  event.preventDefault();
+  els.detailResizeHandle.setPointerCapture(event.pointerId);
+
+  const onPointerMove = (moveEvent) => {
+    setDetailRequestPaneSize(moveEvent.clientY);
+  };
+  const onPointerUp = () => {
+    document.removeEventListener("pointermove", onPointerMove);
+    document.removeEventListener("pointerup", onPointerUp);
+  };
+
+  document.addEventListener("pointermove", onPointerMove);
+  document.addEventListener("pointerup", onPointerUp, { once: true });
+}
+
+function setDetailRequestPaneSize(clientY) {
+  const rect = els.detailSplit.getBoundingClientRect();
+  const handleHeight = els.detailResizeHandle.getBoundingClientRect().height;
+  const minPaneHeight = 140;
+  const maxHeight = Math.max(minPaneHeight, rect.height - handleHeight - minPaneHeight);
+  const nextHeight = Math.min(Math.max(clientY - rect.top, minPaneHeight), maxHeight);
+  state.detailRequestPaneSize = `${Math.round(nextHeight)}px`;
+  els.detailSplit.style.setProperty("--detail-request-pane-size", state.detailRequestPaneSize);
+}
+
+function resizeDetailWithKeyboard(event) {
+  if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) {
+    return;
+  }
+
+  event.preventDefault();
+  const rect = els.detailSplit.getBoundingClientRect();
+  const current = parseInt(state.detailRequestPaneSize, 10) || Math.round((rect.height - 8) / 2);
+  const step = event.shiftKey ? 60 : 20;
+  let next = current;
+
+  if (event.key === "ArrowUp") {
+    next -= step;
+  } else if (event.key === "ArrowDown") {
+    next += step;
+  } else if (event.key === "Home") {
+    next = 140;
+  } else if (event.key === "End") {
+    next = rect.height - 148;
+  }
+
+  setDetailRequestPaneSize(rect.top + next);
+}
+
+function applyLayoutSizes() {
+  if (state.historyPaneSize) {
+    els.workspace.style.setProperty("--history-pane-size", state.historyPaneSize);
+  }
+  els.detailSplit.style.setProperty("--detail-request-pane-size", state.detailRequestPaneSize || "1fr");
+  applyHistoryColumnSizes();
+}
+
+async function sendRuntimeMessage(message) {
+  const result = await chrome.runtime.sendMessage(message);
+  if (!result || !result.ok) {
+    throw new Error(result?.error || "Extension command failed.");
+  }
+  return result;
+}
+
+function clearInterceptEditor(status) {
+  state.pausedInterceptId = null;
+  els.interceptStatus.textContent = status;
+  els.interceptRequest.value = "";
+}
+
 function selectedEntry() {
   return state.entries.find((entry) => entry.id === state.selectedId);
 }
@@ -683,6 +1063,9 @@ function downloadProject() {
     nextSequenceId: state.nextSequenceId,
     sort: state.sort,
     hiddenExtensions: Array.from(state.hiddenExtensions),
+    historyPaneSize: state.historyPaneSize,
+    detailRequestPaneSize: state.detailRequestPaneSize,
+    historyColumns: state.historyColumns,
     repeaterTabs: state.repeaterTabs,
     activeRepeaterId: state.activeRepeaterId
   };
@@ -725,6 +1108,9 @@ async function uploadProject(event) {
     state.hiddenExtensions = Array.isArray(project.hiddenExtensions)
       ? new Set(project.hiddenExtensions.filter((extension) => FILTER_EXTENSIONS.includes(extension)))
       : new Set(DEFAULT_HIDDEN_EXTENSIONS);
+    state.historyPaneSize = typeof project.historyPaneSize === "string" ? project.historyPaneSize : null;
+    state.detailRequestPaneSize = typeof project.detailRequestPaneSize === "string" ? project.detailRequestPaneSize : null;
+    state.historyColumns = normalizeProjectHistoryColumns(project.historyColumns);
     state.repeaterTabs = Array.isArray(project.repeaterTabs)
       ? project.repeaterTabs.map(normalizeProjectRepeaterTab)
       : [];
@@ -734,6 +1120,7 @@ async function uploadProject(event) {
 
     renderHistory();
     renderExtensionFilters();
+    applyLayoutSizes();
     renderDetail();
     renderRepeater();
   } catch (error) {
@@ -780,6 +1167,21 @@ function normalizeProjectSort(sort) {
     key: sort.key,
     direction: sort.direction === "asc" ? "asc" : "desc"
   };
+}
+
+function normalizeProjectHistoryColumns(columns) {
+  const normalized = { ...DEFAULT_HISTORY_COLUMNS };
+  if (!columns || typeof columns !== "object") {
+    return normalized;
+  }
+
+  for (const name of Object.keys(DEFAULT_HISTORY_COLUMNS)) {
+    const value = Number(columns[name]);
+    if (Number.isFinite(value)) {
+      normalized[name] = Math.max(MIN_HISTORY_COLUMNS[name], Math.round(value));
+    }
+  }
+  return normalized;
 }
 
 function formatRawRequest(request) {
@@ -886,7 +1288,8 @@ function isPseudoHeader(name) {
   return typeof name === "string" && name.startsWith(":");
 }
 
-renderHistory();
 renderExtensionFilters();
+applyLayoutSizes();
+renderHistory();
 renderDetail();
 renderRepeater();

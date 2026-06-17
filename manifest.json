@@ -4,7 +4,10 @@
   "description": "A lightweight DevTools request history and repeater for authorized web application testing.",
   "version": "0.1.0",
   "permissions": [
-    "storage"
+    "storage",
+    "clipboardWrite",
+    "debugger",
+    "declarativeNetRequest"
   ],
   "host_permissions": [
     "<all_urls>"
