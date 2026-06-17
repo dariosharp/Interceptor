@@ -1,4 +1,33 @@
 const MAX_HISTORY = 500;
+const FILTER_EXTENSIONS = [
+  "js",
+  "gif",
+  "jpg",
+  "png",
+  "ico",
+  "css",
+  "woff",
+  "woff2",
+  "ttf",
+  "svg",
+  "asp",
+  "aspx",
+  "jsp",
+  "php",
+  "html"
+];
+const DEFAULT_HIDDEN_EXTENSIONS = new Set([
+  "js",
+  "gif",
+  "jpg",
+  "png",
+  "ico",
+  "css",
+  "woff",
+  "woff2",
+  "ttf",
+  "svg"
+]);
 
 const state = {
   capturing: true,
@@ -6,7 +35,14 @@ const state = {
   selectedId: null,
   activeView: "detail",
   repeaterTabs: [],
-  activeRepeaterId: null
+  activeRepeaterId: null,
+  nextSequenceId: 1,
+  sort: {
+    key: "sequenceId",
+    direction: "desc"
+  },
+  hiddenExtensions: new Set(DEFAULT_HIDDEN_EXTENSIONS),
+  highlightTargetId: null
 };
 
 const els = {
@@ -17,7 +53,10 @@ const els = {
   toggleCapture: document.querySelector("#toggleCapture"),
   clearHistory: document.querySelector("#clearHistory"),
   searchInput: document.querySelector("#searchInput"),
+  extensionFilterList: document.querySelector("#extensionFilterList"),
   requestList: document.querySelector("#requestList"),
+  historySortButtons: Array.from(document.querySelectorAll(".history-sort")),
+  highlightMenu: document.querySelector("#highlightMenu"),
   requestText: document.querySelector("#requestText"),
   responseText: document.querySelector("#responseText"),
   responseMeta: document.querySelector("#responseMeta"),
@@ -25,6 +64,7 @@ const els = {
   repeaterTabList: document.querySelector("#repeaterTabList"),
   emptyRepeater: document.querySelector("#emptyRepeater"),
   repeaterEditors: document.querySelector("#repeaterEditors"),
+  repeaterResizeHandle: document.querySelector("#repeaterResizeHandle"),
   repeaterRequest: document.querySelector("#repeaterRequest"),
   repeaterResponse: document.querySelector("#repeaterResponse"),
   repeaterMeta: document.querySelector("#repeaterMeta"),
@@ -43,6 +83,8 @@ chrome.devtools.network.onRequestFinished.addListener((harEntry) => {
 
   harEntry.getContent((content, encoding) => {
     const entry = normalizeHarEntry(harEntry, content, encoding);
+    entry.sequenceId = state.nextSequenceId;
+    state.nextSequenceId += 1;
     state.entries.unshift(entry);
     state.entries = state.entries.slice(0, MAX_HISTORY);
 
@@ -64,11 +106,39 @@ els.toggleCapture.addEventListener("click", () => {
 els.clearHistory.addEventListener("click", () => {
   state.entries = [];
   state.selectedId = null;
+  state.nextSequenceId = 1;
   renderHistory();
   renderDetail();
 });
 
 els.searchInput.addEventListener("input", renderHistory);
+
+for (const button of els.historySortButtons) {
+  button.addEventListener("click", () => {
+    setHistorySort(button.dataset.sort);
+  });
+}
+
+els.highlightMenu.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-color]");
+  if (!button || !state.highlightTargetId) {
+    return;
+  }
+
+  const entry = state.entries.find((candidate) => candidate.id === state.highlightTargetId);
+  if (entry) {
+    entry.highlight = button.dataset.color;
+    renderHistory();
+  }
+  hideHighlightMenu();
+});
+
+document.addEventListener("click", hideHighlightMenu);
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    hideHighlightMenu();
+  }
+});
 
 els.downloadProject.addEventListener("click", downloadProject);
 
@@ -130,6 +200,9 @@ els.sendRequest.addEventListener("click", async () => {
 
 els.repeaterRequest.addEventListener("input", syncActiveRepeaterTab);
 
+els.repeaterResizeHandle.addEventListener("pointerdown", startRepeaterResize);
+els.repeaterResizeHandle.addEventListener("keydown", resizeRepeaterWithKeyboard);
+
 for (const tab of els.tabs) {
   tab.addEventListener("click", () => switchView(tab.dataset.view));
 }
@@ -140,6 +213,7 @@ function normalizeHarEntry(harEntry, content, encoding) {
 
   return {
     id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    sequenceId: 0,
     startedDateTime: harEntry.startedDateTime,
     time: Math.round(harEntry.time || 0),
     request: {
@@ -163,6 +237,9 @@ function normalizeHarEntry(harEntry, content, encoding) {
 function headersToObject(headers) {
   const result = {};
   for (const header of headers || []) {
+    if (isPseudoHeader(header.name)) {
+      continue;
+    }
     result[header.name] = header.value;
   }
   return result;
@@ -171,20 +248,36 @@ function headersToObject(headers) {
 function renderHistory() {
   const query = els.searchInput.value.trim().toLowerCase();
   const visibleEntries = state.entries.filter((entry) => {
-    const haystack = `${entry.request.method} ${entry.response.status} ${entry.request.url}`.toLowerCase();
-    return haystack.includes(query);
-  });
+    const haystack = [
+      entry.sequenceId,
+      entry.request.method,
+      entry.response.status,
+      entry.request.url,
+      formatHistoryTime(entry.startedDateTime)
+    ].join(" ").toLowerCase();
+    return haystack.includes(query) && !isHiddenByExtension(entry);
+  }).sort(compareHistoryEntries);
+
+  updateHistorySortButtons();
 
   els.requestList.replaceChildren(...visibleEntries.map((entry) => {
     const item = document.createElement("li");
     const button = document.createElement("button");
     button.type = "button";
-    button.className = `request-row${entry.id === state.selectedId ? " active" : ""}`;
+    button.className = historyRowClass(entry);
     button.addEventListener("click", () => {
       state.selectedId = entry.id;
       renderHistory();
       renderDetail();
     });
+    button.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      state.highlightTargetId = entry.id;
+      showHighlightMenu(event.clientX, event.clientY);
+    });
+
+    const sequence = document.createElement("span");
+    sequence.textContent = entry.sequenceId || "-";
 
     const method = document.createElement("span");
     method.className = "method";
@@ -199,10 +292,145 @@ function renderHistory() {
     url.title = entry.request.url;
     url.textContent = entry.request.url;
 
-    button.append(method, status, url);
+    const time = document.createElement("span");
+    time.className = "history-time";
+    time.textContent = formatHistoryTime(entry.startedDateTime);
+
+    button.append(sequence, method, status, url, time);
     item.append(button);
     return item;
   }));
+}
+
+function renderExtensionFilters() {
+  els.extensionFilterList.replaceChildren(...FILTER_EXTENSIONS.map((extension) => {
+    const label = document.createElement("label");
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = state.hiddenExtensions.has(extension);
+    checkbox.addEventListener("change", () => {
+      if (checkbox.checked) {
+        state.hiddenExtensions.add(extension);
+      } else {
+        state.hiddenExtensions.delete(extension);
+      }
+      renderHistory();
+    });
+
+    const text = document.createElement("span");
+    text.textContent = `Hide .${extension}`;
+
+    label.append(checkbox, text);
+    return label;
+  }));
+}
+
+function setHistorySort(key) {
+  if (state.sort.key === key) {
+    state.sort.direction = state.sort.direction === "asc" ? "desc" : "asc";
+  } else {
+    state.sort.key = key;
+    state.sort.direction = "asc";
+  }
+  renderHistory();
+}
+
+function compareHistoryEntries(left, right) {
+  const direction = state.sort.direction === "asc" ? 1 : -1;
+  const leftValue = historySortValue(left, state.sort.key);
+  const rightValue = historySortValue(right, state.sort.key);
+
+  if (typeof leftValue === "number" && typeof rightValue === "number") {
+    return (leftValue - rightValue) * direction;
+  }
+  return String(leftValue).localeCompare(String(rightValue)) * direction;
+}
+
+function historySortValue(entry, key) {
+  if (key === "sequenceId") {
+    return entry.sequenceId || 0;
+  }
+  if (key === "method") {
+    return entry.request.method || "";
+  }
+  if (key === "status") {
+    return entry.response.status || 0;
+  }
+  if (key === "url") {
+    return entry.request.url || "";
+  }
+  if (key === "timestamp") {
+    return Date.parse(entry.startedDateTime) || 0;
+  }
+  return "";
+}
+
+function updateHistorySortButtons() {
+  for (const button of els.historySortButtons) {
+    const active = button.dataset.sort === state.sort.key;
+    button.classList.toggle("active", active);
+    const label = button.textContent.replace(/\s+[↑↓]$/, "");
+    button.textContent = active
+      ? `${label} ${state.sort.direction === "asc" ? "↑" : "↓"}`
+      : label;
+  }
+}
+
+function historyRowClass(entry) {
+  const classes = ["request-row"];
+  if (entry.id === state.selectedId) {
+    classes.push("active");
+  }
+  if (entry.highlight) {
+    classes.push(`highlight-${entry.highlight}`);
+  }
+  return classes.join(" ");
+}
+
+function showHighlightMenu(clientX, clientY) {
+  els.highlightMenu.hidden = false;
+  const rect = els.highlightMenu.getBoundingClientRect();
+  const left = Math.min(clientX, window.innerWidth - rect.width - 8);
+  const top = Math.min(clientY, window.innerHeight - rect.height - 8);
+  els.highlightMenu.style.left = `${Math.max(8, left)}px`;
+  els.highlightMenu.style.top = `${Math.max(8, top)}px`;
+}
+
+function hideHighlightMenu() {
+  els.highlightMenu.hidden = true;
+  state.highlightTargetId = null;
+}
+
+function formatHistoryTime(value) {
+  if (!value) {
+    return "-";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "-";
+  }
+  return date.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit"
+  });
+}
+
+function isHiddenByExtension(entry) {
+  const extension = requestExtension(entry.request.url);
+  return extension ? state.hiddenExtensions.has(extension) : false;
+}
+
+function requestExtension(urlValue) {
+  try {
+    const url = new URL(urlValue);
+    const pathname = url.pathname.toLowerCase();
+    const lastSegment = pathname.split("/").pop() || "";
+    const dotIndex = lastSegment.lastIndexOf(".");
+    return dotIndex >= 0 ? lastSegment.slice(dotIndex + 1) : "";
+  } catch (_error) {
+    return "";
+  }
 }
 
 function renderDetail() {
@@ -228,6 +456,7 @@ function createRepeaterTab(entry) {
     requestText: formatRawRequest(entry.request),
     responseText: "",
     meta: "Not sent",
+    requestPaneSize: null,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
@@ -242,6 +471,7 @@ function renderRepeaterTabs() {
   els.repeaterTabList.replaceChildren(...state.repeaterTabs.map((tab) => {
     const wrapper = document.createElement("div");
     wrapper.className = `repeater-tab${tab.id === state.activeRepeaterId ? " active" : ""}`;
+    wrapper.dataset.tabId = tab.id;
 
     const button = document.createElement("button");
     button.type = "button";
@@ -251,6 +481,9 @@ function renderRepeaterTabs() {
       syncActiveRepeaterTab();
       state.activeRepeaterId = tab.id;
       renderRepeater();
+    });
+    button.addEventListener("dblclick", () => {
+      renameRepeaterTab(tab.id);
     });
 
     const label = document.createElement("span");
@@ -286,6 +519,7 @@ function renderRepeaterEditors() {
     return;
   }
 
+  els.repeaterEditors.style.setProperty("--request-pane-size", tab.requestPaneSize || "1fr");
   els.repeaterRequest.value = tab.requestText;
   els.repeaterResponse.value = tab.responseText;
   els.repeaterMeta.textContent = tab.meta;
@@ -320,6 +554,110 @@ function syncActiveRepeaterTab() {
   tab.updatedAt = new Date().toISOString();
 }
 
+function renameRepeaterTab(tabId) {
+  const tab = state.repeaterTabs.find((candidate) => candidate.id === tabId);
+  if (!tab) {
+    return;
+  }
+
+  const wrapper = els.repeaterTabList.querySelector(`[data-tab-id="${CSS.escape(tabId)}"]`);
+  const button = wrapper?.querySelector(".repeater-tab-main");
+  if (!button) {
+    return;
+  }
+
+  const input = document.createElement("input");
+  input.className = "tab-name-input";
+  input.value = tab.title;
+  input.addEventListener("click", (event) => event.stopPropagation());
+  input.addEventListener("dblclick", (event) => event.stopPropagation());
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      commitRepeaterTabName(tab, input.value);
+    }
+    if (event.key === "Escape") {
+      renderRepeaterTabs();
+    }
+  });
+  input.addEventListener("blur", () => {
+    commitRepeaterTabName(tab, input.value);
+  });
+
+  button.replaceChildren(input);
+  input.focus();
+  input.select();
+}
+
+function commitRepeaterTabName(tab, value) {
+  const nextTitle = value.trim();
+  if (nextTitle) {
+    tab.title = nextTitle;
+    tab.updatedAt = new Date().toISOString();
+  }
+  renderRepeaterTabs();
+}
+
+function startRepeaterResize(event) {
+  const tab = activeRepeaterTab();
+  if (!tab) {
+    return;
+  }
+
+  event.preventDefault();
+  els.repeaterResizeHandle.setPointerCapture(event.pointerId);
+
+  const onPointerMove = (moveEvent) => {
+    setRepeaterRequestPaneSize(tab, moveEvent.clientY);
+  };
+  const onPointerUp = () => {
+    document.removeEventListener("pointermove", onPointerMove);
+    document.removeEventListener("pointerup", onPointerUp);
+  };
+
+  document.addEventListener("pointermove", onPointerMove);
+  document.addEventListener("pointerup", onPointerUp, { once: true });
+}
+
+function setRepeaterRequestPaneSize(tab, clientY) {
+  const rect = els.repeaterEditors.getBoundingClientRect();
+  const handleHeight = els.repeaterResizeHandle.getBoundingClientRect().height;
+  const minPaneHeight = 140;
+  const maxHeight = Math.max(minPaneHeight, rect.height - handleHeight - minPaneHeight);
+  const nextHeight = Math.min(Math.max(clientY - rect.top, minPaneHeight), maxHeight);
+  tab.requestPaneSize = `${Math.round(nextHeight)}px`;
+  tab.updatedAt = new Date().toISOString();
+  els.repeaterEditors.style.setProperty("--request-pane-size", tab.requestPaneSize);
+}
+
+function resizeRepeaterWithKeyboard(event) {
+  if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) {
+    return;
+  }
+
+  const tab = activeRepeaterTab();
+  if (!tab) {
+    return;
+  }
+
+  event.preventDefault();
+  const rect = els.repeaterEditors.getBoundingClientRect();
+  const current = parseInt(tab.requestPaneSize, 10) || Math.round((rect.height - 8) / 2);
+  const step = event.shiftKey ? 60 : 20;
+  let next = current;
+
+  if (event.key === "ArrowUp") {
+    next -= step;
+  } else if (event.key === "ArrowDown") {
+    next += step;
+  } else if (event.key === "Home") {
+    next = 140;
+  } else if (event.key === "End") {
+    next = rect.height - 148;
+  }
+
+  setRepeaterRequestPaneSize(tab, rect.top + next);
+}
+
 function selectedEntry() {
   return state.entries.find((entry) => entry.id === state.selectedId);
 }
@@ -342,6 +680,9 @@ function downloadProject() {
     exportedAt: new Date().toISOString(),
     history: state.entries,
     selectedId: state.selectedId,
+    nextSequenceId: state.nextSequenceId,
+    sort: state.sort,
+    hiddenExtensions: Array.from(state.hiddenExtensions),
     repeaterTabs: state.repeaterTabs,
     activeRepeaterId: state.activeRepeaterId
   };
@@ -370,10 +711,20 @@ async function uploadProject(event) {
       throw new Error("Unsupported project file.");
     }
 
-    state.entries = Array.isArray(project.history) ? project.history.slice(0, MAX_HISTORY) : [];
+    state.entries = Array.isArray(project.history)
+      ? project.history.slice(0, MAX_HISTORY).map(normalizeProjectHistoryEntry)
+      : [];
     state.selectedId = state.entries.some((entry) => entry.id === project.selectedId)
       ? project.selectedId
       : state.entries[0]?.id || null;
+    state.nextSequenceId = Math.max(
+      Number.isInteger(project.nextSequenceId) ? project.nextSequenceId : 1,
+      nextSequenceIdFromEntries()
+    );
+    state.sort = normalizeProjectSort(project.sort);
+    state.hiddenExtensions = Array.isArray(project.hiddenExtensions)
+      ? new Set(project.hiddenExtensions.filter((extension) => FILTER_EXTENSIONS.includes(extension)))
+      : new Set(DEFAULT_HIDDEN_EXTENSIONS);
     state.repeaterTabs = Array.isArray(project.repeaterTabs)
       ? project.repeaterTabs.map(normalizeProjectRepeaterTab)
       : [];
@@ -382,6 +733,7 @@ async function uploadProject(event) {
       : state.repeaterTabs[0]?.id || null;
 
     renderHistory();
+    renderExtensionFilters();
     renderDetail();
     renderRepeater();
   } catch (error) {
@@ -397,8 +749,36 @@ function normalizeProjectRepeaterTab(tab) {
     requestText: typeof tab.requestText === "string" ? tab.requestText : "",
     responseText: typeof tab.responseText === "string" ? tab.responseText : "",
     meta: typeof tab.meta === "string" ? tab.meta : "Not sent",
+    requestPaneSize: typeof tab.requestPaneSize === "string" ? tab.requestPaneSize : null,
     createdAt: typeof tab.createdAt === "string" ? tab.createdAt : new Date().toISOString(),
     updatedAt: typeof tab.updatedAt === "string" ? tab.updatedAt : new Date().toISOString()
+  };
+}
+
+function normalizeProjectHistoryEntry(entry, index) {
+  return {
+    ...entry,
+    id: typeof entry.id === "string" ? entry.id : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    sequenceId: Number.isInteger(entry.sequenceId) ? entry.sequenceId : index + 1,
+    highlight: ["red", "yellow", "blue", "green", "purple"].includes(entry.highlight) ? entry.highlight : ""
+  };
+}
+
+function nextSequenceIdFromEntries() {
+  const maxSequenceId = state.entries.reduce((max, entry) => {
+    return Math.max(max, Number.isInteger(entry.sequenceId) ? entry.sequenceId : 0);
+  }, 0);
+  return maxSequenceId + 1;
+}
+
+function normalizeProjectSort(sort) {
+  const allowedKeys = ["sequenceId", "method", "status", "url", "timestamp"];
+  if (!sort || !allowedKeys.includes(sort.key)) {
+    return { key: "sequenceId", direction: "desc" };
+  }
+  return {
+    key: sort.key,
+    direction: sort.direction === "asc" ? "asc" : "desc"
   };
 }
 
@@ -425,6 +805,7 @@ function formatRawResponse(response) {
 
 function formatHeaders(headers) {
   return Object.entries(headers || {})
+    .filter(([name]) => !isPseudoHeader(name))
     .map(([name, value]) => `${name}: ${value}`)
     .join("\n");
 }
@@ -449,6 +830,9 @@ function parseRawRequest(rawText) {
   const headers = {};
   for (const line of lines) {
     const colon = line.indexOf(":");
+    if (line.startsWith(":")) {
+      continue;
+    }
     if (colon <= 0) {
       throw new Error(`Invalid header: ${line}`);
     }
@@ -498,6 +882,11 @@ function inferScheme(headers) {
   return "https";
 }
 
+function isPseudoHeader(name) {
+  return typeof name === "string" && name.startsWith(":");
+}
+
 renderHistory();
+renderExtensionFilters();
 renderDetail();
 renderRepeater();

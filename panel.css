@@ -120,6 +120,10 @@ textarea:focus-visible {
 }
 
 .filters {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
   padding: 10px;
   border-bottom: 1px solid var(--line);
 }
@@ -134,10 +138,54 @@ textarea:focus-visible {
   padding: 0 10px;
 }
 
+.extension-filter {
+  position: relative;
+}
+
+.extension-filter summary {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  padding: 0 10px;
+  list-style: none;
+}
+
+.extension-filter summary::-webkit-details-marker {
+  display: none;
+}
+
+.extension-filter-list {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 10;
+  width: 180px;
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  padding: 8px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+}
+
+.extension-filter-list label {
+  min-height: 26px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+}
+
 .history-head,
 .request-row {
   display: grid;
-  grid-template-columns: 72px 64px minmax(0, 1fr);
+  grid-template-columns: 56px 72px 64px minmax(0, 1fr) 74px;
   align-items: center;
   gap: 8px;
 }
@@ -148,6 +196,19 @@ textarea:focus-visible {
   color: var(--muted);
   border-bottom: 1px solid var(--line);
   font-size: 12px;
+}
+
+.history-sort {
+  min-height: 24px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  text-align: left;
+  padding: 0;
+}
+
+.history-sort.active {
+  color: var(--accent-strong);
 }
 
 .request-list {
@@ -172,6 +233,34 @@ textarea:focus-visible {
   background: rgba(79, 178, 134, 0.18);
 }
 
+.request-row.highlight-red {
+  background: rgba(226, 109, 90, 0.28);
+}
+
+.request-row.highlight-yellow {
+  background: rgba(218, 181, 72, 0.28);
+}
+
+.request-row.highlight-blue {
+  background: rgba(86, 155, 214, 0.28);
+}
+
+.request-row.highlight-green {
+  background: rgba(79, 178, 134, 0.28);
+}
+
+.request-row.highlight-purple {
+  background: rgba(166, 115, 201, 0.3);
+}
+
+.request-row.active.highlight-red,
+.request-row.active.highlight-yellow,
+.request-row.active.highlight-blue,
+.request-row.active.highlight-green,
+.request-row.active.highlight-purple {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
 .method {
   color: var(--accent-strong);
   font-weight: 700;
@@ -185,6 +274,29 @@ textarea:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.history-time {
+  color: var(--muted);
+}
+
+.highlight-menu {
+  position: fixed;
+  z-index: 100;
+  width: 116px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  padding: 6px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+}
+
+.highlight-menu button {
+  width: 100%;
+  justify-content: flex-start;
+  border: 0;
+  background: transparent;
+  text-align: left;
 }
 
 .detail-pane {
@@ -250,6 +362,8 @@ textarea:focus-visible {
 }
 
 .repeater-tab-main {
+  display: flex;
+  align-items: center;
   max-width: 220px;
   min-width: 110px;
   gap: 8px;
@@ -269,6 +383,15 @@ textarea:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.tab-name-input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  padding: 0;
 }
 
 .close-tab {
@@ -300,10 +423,41 @@ textarea:focus-visible {
 }
 
 .split {
+  flex: 1;
   width: 100%;
   min-height: 0;
   display: grid;
   grid-template-rows: 1fr 1fr;
+}
+
+#repeaterEditors {
+  grid-template-rows: minmax(140px, var(--request-pane-size, 1fr)) 8px minmax(140px, 1fr);
+}
+
+.resize-handle {
+  min-height: 8px;
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  cursor: row-resize;
+  position: relative;
+}
+
+.resize-handle::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 42px;
+  height: 2px;
+  transform: translate(-50%, -50%);
+  background: var(--line);
+  border-radius: 999px;
+}
+
+.resize-handle:hover::before,
+.resize-handle:focus-visible::before {
+  background: var(--accent);
 }
 
 .editor-block {

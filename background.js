@@ -60,6 +60,9 @@ async function sendRepeaterRequest(request) {
 
 function isForbiddenRequestHeader(name) {
   const normalized = name.toLowerCase();
+  if (normalized.startsWith(":")) {
+    return true;
+  }
   return [
     "accept-charset",
     "accept-encoding",

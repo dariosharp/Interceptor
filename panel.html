@@ -26,11 +26,17 @@
         <aside class="history-pane" aria-label="Request history">
           <div class="filters">
             <input id="searchInput" type="search" placeholder="Filter URL, method, status">
+            <details class="extension-filter">
+              <summary>Extensions</summary>
+              <div id="extensionFilterList" class="extension-filter-list"></div>
+            </details>
           </div>
           <div class="history-head">
-            <span>Method</span>
-            <span>Status</span>
-            <span>URL</span>
+            <button class="history-sort" type="button" data-sort="sequenceId">ID</button>
+            <button class="history-sort" type="button" data-sort="method">Method</button>
+            <button class="history-sort" type="button" data-sort="status">Status</button>
+            <button class="history-sort" type="button" data-sort="url">URL</button>
+            <button class="history-sort" type="button" data-sort="timestamp">Time</button>
           </div>
           <ol id="requestList" class="request-list"></ol>
         </aside>
@@ -74,6 +80,7 @@
                   </div>
                   <textarea id="repeaterRequest" spellcheck="false"></textarea>
                 </section>
+                <div id="repeaterResizeHandle" class="resize-handle" role="separator" aria-orientation="horizontal" tabindex="0"></div>
                 <section class="editor-block">
                   <div class="block-head">
                     <strong>Repeater Response</strong>
@@ -86,6 +93,14 @@
           </section>
         </section>
       </section>
+      <div id="highlightMenu" class="highlight-menu" hidden>
+        <button type="button" data-color="">None</button>
+        <button type="button" data-color="red">Red</button>
+        <button type="button" data-color="yellow">Yellow</button>
+        <button type="button" data-color="blue">Blue</button>
+        <button type="button" data-color="green">Green</button>
+        <button type="button" data-color="purple">Purple</button>
+      </div>
     </main>
     <script src="panel.js"></script>
   </body>
