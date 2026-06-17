@@ -445,8 +445,10 @@ textarea:focus-visible {
 
 .intercept-list-head {
   min-height: 30px;
-  display: flex;
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) 28px;
   align-items: center;
+  gap: 8px;
   padding: 0 10px;
   border-bottom: 1px solid var(--line);
   color: var(--muted);
@@ -463,7 +465,7 @@ textarea:focus-visible {
   width: 100%;
   min-height: 34px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 28px;
+  grid-template-columns: 48px minmax(0, 1fr) 28px;
   align-items: center;
   gap: 8px;
   border: 0;
@@ -479,6 +481,10 @@ textarea:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.intercept-url-id {
+  color: var(--muted);
 }
 
 .remove-intercept-url {
@@ -502,6 +508,14 @@ textarea:focus-visible {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.intercept-toggle.enabled {
+  color: var(--danger);
+}
+
+.intercept-toggle.disabled {
+  color: var(--accent-strong);
 }
 
 .repeater-tabs {

@@ -76,7 +76,12 @@ async function handleMessage(message) {
   }
 
   if (message.type === "intercept:start") {
-    await startIntercept(message.tabId, message.urls);
+    await startIntercept(message.tabId, message.urls, message.enabled);
+    return {};
+  }
+
+  if (message.type === "intercept:setEnabled") {
+    await setInterceptEnabled(message.tabId, message.enabled);
     return {};
   }
 
@@ -172,17 +177,17 @@ function exactUrlRegex(url) {
   return `^${url.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`;
 }
 
-async function startIntercept(tabId, urls) {
+async function startIntercept(tabId, urls, enabled = true) {
   const target = debuggerTarget(tabId);
   let session = interceptSessions.get(tabId);
 
   if (!session) {
     await chrome.debugger.attach(target, DEBUGGER_VERSION);
-    session = { enabled: true, attached: true, paused: null, urls: new Set(urls || []) };
+    session = { enabled, attached: true, paused: null, urls: new Set(urls || []) };
     interceptSessions.set(tabId, session);
   }
 
-  session.enabled = true;
+  session.enabled = enabled;
   session.urls = new Set(urls || []);
   await chrome.debugger.sendCommand(target, "Fetch.enable", {
     patterns: [
@@ -190,6 +195,20 @@ async function startIntercept(tabId, urls) {
       { urlPattern: "*", requestStage: "Response" }
     ]
   });
+}
+
+async function setInterceptEnabled(tabId, enabled) {
+  const session = interceptSessions.get(tabId);
+  if (!session) {
+    return;
+  }
+
+  session.enabled = Boolean(enabled);
+  if (!session.enabled && session.paused) {
+    const requestId = session.paused.requestId;
+    session.paused = null;
+    await continuePausedRequest(tabId, requestId);
+  }
 }
 
 function setInterceptUrls(tabId, urls) {

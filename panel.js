@@ -65,8 +65,10 @@ const state = {
   urlMenuTargetId: null,
   blockedUrls: new Set(),
   interceptUrls: new Set(),
+  interceptEnabled: true,
   interceptPollId: null,
-  pausedInterceptId: null
+  pausedInterceptId: null,
+  interceptMenuTargetUrl: null
 };
 
 const els = {
@@ -86,6 +88,7 @@ const els = {
   columnResizers: Array.from(document.querySelectorAll(".column-resizer")),
   highlightMenu: document.querySelector("#highlightMenu"),
   urlMenu: document.querySelector("#urlMenu"),
+  interceptUrlMenu: document.querySelector("#interceptUrlMenu"),
   urlInterceptAction: document.querySelector("#urlInterceptAction"),
   urlBlockAction: document.querySelector("#urlBlockAction"),
   workspace: document.querySelector(".workspace"),
@@ -105,8 +108,7 @@ const els = {
   repeaterMeta: document.querySelector("#repeaterMeta"),
   sendRequest: document.querySelector("#sendRequest"),
   interceptStatus: document.querySelector("#interceptStatus"),
-  interceptForward: document.querySelector("#interceptForward"),
-  interceptDrop: document.querySelector("#interceptDrop"),
+  interceptToggle: document.querySelector("#interceptToggle"),
   interceptRequest: document.querySelector("#interceptRequest"),
   tabs: Array.from(document.querySelectorAll(".tab")),
   views: {
@@ -205,14 +207,26 @@ els.urlMenu.addEventListener("click", async (event) => {
   hideUrlMenu();
 });
 
+els.interceptUrlMenu.addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-action]");
+  if (!button || button.dataset.action !== "remove" || !state.interceptMenuTargetUrl) {
+    return;
+  }
+
+  await removeInterceptUrl(state.interceptMenuTargetUrl);
+  hideInterceptUrlMenu();
+});
+
 document.addEventListener("click", () => {
   hideHighlightMenu();
   hideUrlMenu();
+  hideInterceptUrlMenu();
 });
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     hideHighlightMenu();
     hideUrlMenu();
+    hideInterceptUrlMenu();
   }
 });
 
@@ -274,12 +288,8 @@ els.sendRequest.addEventListener("click", async () => {
   renderRepeaterEditors();
 });
 
-els.interceptForward.addEventListener("click", async () => {
-  await forwardCurrentIntercept();
-});
-
-els.interceptDrop.addEventListener("click", async () => {
-  await dropCurrentIntercept();
+els.interceptToggle.addEventListener("click", async () => {
+  await setInterceptEnabled(!state.interceptEnabled);
 });
 
 els.repeaterRequest.addEventListener("input", syncActiveRepeaterTab);
@@ -330,7 +340,8 @@ async function startInterceptMode() {
   await sendRuntimeMessage({
     type: "intercept:start",
     tabId: state.inspectedTabId,
-    urls: Array.from(state.interceptUrls)
+    urls: Array.from(state.interceptUrls),
+    enabled: state.interceptEnabled
   });
 
   if (state.interceptPollId) {
@@ -345,6 +356,7 @@ function renderModeLayout() {
   document.querySelector(".filters").hidden = interceptMode;
   els.historyTable.hidden = interceptMode;
   els.interceptListPane.hidden = !interceptMode;
+  els.interceptToggle.hidden = !interceptMode;
 
   els.tabs[0].textContent = interceptMode ? "Forward" : "History";
   els.tabs[1].textContent = interceptMode ? "Drop" : "Repeater";
@@ -359,6 +371,7 @@ function renderModeLayout() {
     }
   }
   renderInterceptUrlList();
+  renderInterceptToggle();
 }
 
 async function stopInterceptMode() {
@@ -371,6 +384,11 @@ async function stopInterceptMode() {
 }
 
 async function pollIntercept() {
+  if (!state.interceptEnabled) {
+    els.interceptStatus.textContent = "Intercept disabled";
+    return;
+  }
+
   const result = await sendRuntimeMessage({ type: "intercept:getPaused", tabId: state.inspectedTabId }).catch((error) => {
     els.interceptStatus.textContent = error.message || String(error);
     return null;
@@ -391,6 +409,32 @@ async function pollIntercept() {
   const stage = result.paused.stage === "response" ? "Response" : "Request";
   els.interceptStatus.textContent = `${stage}: ${result.paused.method} ${result.paused.url}`;
   els.interceptRequest.value = result.paused.rawMessage;
+}
+
+async function setInterceptEnabled(enabled) {
+  state.interceptEnabled = enabled;
+  renderInterceptToggle();
+  if (!enabled) {
+    clearInterceptEditor("Intercept disabled");
+  } else {
+    clearInterceptEditor("Waiting for request");
+  }
+
+  if (state.mode === "intercept") {
+    await sendRuntimeMessage({
+      type: "intercept:setEnabled",
+      tabId: state.inspectedTabId,
+      enabled
+    }).catch((error) => {
+      els.interceptStatus.textContent = error.message || String(error);
+    });
+  }
+}
+
+function renderInterceptToggle() {
+  els.interceptToggle.textContent = state.interceptEnabled ? "Enable" : "Disabled";
+  els.interceptToggle.classList.toggle("enabled", state.interceptEnabled);
+  els.interceptToggle.classList.toggle("disabled", !state.interceptEnabled);
 }
 
 function normalizeHarEntry(harEntry, content, encoding) {
@@ -702,7 +746,8 @@ async function toggleHistoryEntryUrlBlock(url) {
 
 async function toggleHistoryEntryUrlIntercept(url) {
   if (state.interceptUrls.has(url)) {
-    state.interceptUrls.delete(url);
+    await removeInterceptUrl(url);
+    return;
   } else {
     state.interceptUrls.add(url);
   }
@@ -718,15 +763,37 @@ async function toggleHistoryEntryUrlIntercept(url) {
   }
 }
 
+async function removeInterceptUrl(url) {
+  state.interceptUrls.delete(url);
+  renderHistory();
+  renderInterceptUrlList();
+  if (state.mode === "intercept") {
+    await sendRuntimeMessage({
+      type: "intercept:setUrls",
+      tabId: state.inspectedTabId,
+      urls: Array.from(state.interceptUrls)
+    }).catch(() => {});
+  }
+}
+
 function renderInterceptUrlList() {
-  els.interceptUrlList.replaceChildren(...Array.from(state.interceptUrls).map((url) => {
+  els.interceptUrlList.replaceChildren(...Array.from(state.interceptUrls).map((url, index) => {
     const item = document.createElement("li");
     const row = document.createElement("div");
     row.className = "intercept-url-row";
 
+    const id = document.createElement("span");
+    id.className = "intercept-url-id";
+    id.textContent = index + 1;
+
     const text = document.createElement("span");
     text.title = url;
     text.textContent = url;
+    text.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      state.interceptMenuTargetUrl = url;
+      showInterceptUrlMenu(event.clientX, event.clientY);
+    });
 
     const remove = document.createElement("button");
     remove.type = "button";
@@ -737,10 +804,24 @@ function renderInterceptUrlList() {
       await toggleHistoryEntryUrlIntercept(url);
     });
 
-    row.append(text, remove);
+    row.append(id, text, remove);
     item.append(row);
     return item;
   }));
+}
+
+function showInterceptUrlMenu(clientX, clientY) {
+  els.interceptUrlMenu.hidden = false;
+  const rect = els.interceptUrlMenu.getBoundingClientRect();
+  const left = Math.min(clientX, window.innerWidth - rect.width - 8);
+  const top = Math.min(clientY, window.innerHeight - rect.height - 8);
+  els.interceptUrlMenu.style.left = `${Math.max(8, left)}px`;
+  els.interceptUrlMenu.style.top = `${Math.max(8, top)}px`;
+}
+
+function hideInterceptUrlMenu() {
+  els.interceptUrlMenu.hidden = true;
+  state.interceptMenuTargetUrl = null;
 }
 
 function formatHistoryTime(value) {

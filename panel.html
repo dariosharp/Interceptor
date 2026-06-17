@@ -61,7 +61,11 @@
             <ol id="requestList" class="request-list"></ol>
           </div>
           <div id="interceptListPane" class="intercept-list-pane" hidden>
-            <div class="intercept-list-head">Intercept</div>
+            <div class="intercept-list-head">
+              <span>ID</span>
+              <span>Intercept</span>
+              <span></span>
+            </div>
             <ol id="interceptUrlList" class="intercept-url-list"></ol>
           </div>
         </aside>
@@ -70,6 +74,7 @@
 
         <section class="detail-pane" aria-label="Request detail">
           <div class="tabs" role="tablist">
+            <button id="interceptToggle" class="intercept-toggle enabled" type="button" hidden>Enable</button>
             <button class="tab active" data-view="detail" type="button">History</button>
             <button class="tab" data-view="repeater" type="button">Repeater</button>
           </div>
@@ -124,10 +129,6 @@
             <div class="intercept-shell">
               <div class="intercept-bar">
                 <strong id="interceptStatus">Waiting for request</strong>
-                <div class="intercept-actions">
-                  <button id="interceptForward" type="button">Forward</button>
-                  <button id="interceptDrop" type="button">Drop</button>
-                </div>
               </div>
               <textarea id="interceptRequest" spellcheck="false"></textarea>
             </div>
@@ -147,6 +148,9 @@
         <button type="button" data-action="delete">Delete</button>
         <button id="urlInterceptAction" type="button" data-action="intercept">Intercept</button>
         <button id="urlBlockAction" type="button" data-action="block">Block</button>
+      </div>
+      <div id="interceptUrlMenu" class="url-menu" hidden>
+        <button type="button" data-action="remove">Remove</button>
       </div>
     </main>
     <script src="panel.js"></script>
