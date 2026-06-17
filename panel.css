@@ -483,6 +483,17 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
+.intercept-url-input {
+  min-width: 0;
+  width: 100%;
+  min-height: 26px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--text);
+  padding: 0 6px;
+}
+
 .intercept-url-id {
   color: var(--muted);
 }

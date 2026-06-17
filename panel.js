@@ -140,7 +140,12 @@ chrome.devtools.network.onRequestFinished.addListener((harEntry) => {
 });
 
 els.toggleCapture.addEventListener("click", () => {
-  setMode(state.mode === "capturing" ? "paused" : "capturing");
+  if (state.mode === "intercept") {
+    setMode("capturing");
+    return;
+  }
+  state.capturing = !state.capturing;
+  els.toggleCapture.textContent = state.capturing ? "Pause" : "Resume";
 });
 
 els.modeSelect.addEventListener("change", () => {
@@ -432,7 +437,7 @@ async function setInterceptEnabled(enabled) {
 }
 
 function renderInterceptToggle() {
-  els.interceptToggle.textContent = state.interceptEnabled ? "Enable" : "Disable";
+  els.interceptToggle.textContent = state.interceptEnabled ? "Enabled" : "Disabled";
   els.interceptToggle.classList.toggle("enabled", state.interceptEnabled);
   els.interceptToggle.classList.toggle("disabled", !state.interceptEnabled);
 }
@@ -767,13 +772,33 @@ async function removeInterceptUrl(url) {
   state.interceptUrls.delete(url);
   renderHistory();
   renderInterceptUrlList();
-  if (state.mode === "intercept") {
-    await sendRuntimeMessage({
-      type: "intercept:setUrls",
-      tabId: state.inspectedTabId,
-      urls: Array.from(state.interceptUrls)
-    }).catch(() => {});
+  await syncInterceptUrls();
+}
+
+async function updateInterceptUrl(oldUrl, nextUrl) {
+  const normalizedUrl = nextUrl.trim();
+  if (!normalizedUrl || normalizedUrl === oldUrl) {
+    renderInterceptUrlList();
+    return;
   }
+
+  state.interceptUrls.delete(oldUrl);
+  state.interceptUrls.add(normalizedUrl);
+  renderHistory();
+  renderInterceptUrlList();
+  await syncInterceptUrls();
+}
+
+async function syncInterceptUrls() {
+  if (state.mode !== "intercept") {
+    return;
+  }
+
+  await sendRuntimeMessage({
+    type: "intercept:setUrls",
+    tabId: state.inspectedTabId,
+    urls: Array.from(state.interceptUrls)
+  }).catch(() => {});
 }
 
 function renderInterceptUrlList() {
@@ -789,6 +814,9 @@ function renderInterceptUrlList() {
     const text = document.createElement("span");
     text.title = url;
     text.textContent = url;
+    text.addEventListener("dblclick", () => {
+      editInterceptUrl(row, url);
+    });
     text.addEventListener("contextmenu", (event) => {
       event.preventDefault();
       state.interceptMenuTargetUrl = url;
@@ -808,6 +836,30 @@ function renderInterceptUrlList() {
     item.append(row);
     return item;
   }));
+}
+
+function editInterceptUrl(row, url) {
+  const currentText = row.children[1];
+  const input = document.createElement("input");
+  input.className = "intercept-url-input";
+  input.value = url;
+  input.addEventListener("click", (event) => event.stopPropagation());
+  input.addEventListener("dblclick", (event) => event.stopPropagation());
+  input.addEventListener("keydown", async (event) => {
+    if (event.key === "Enter") {
+      await updateInterceptUrl(url, input.value);
+    }
+    if (event.key === "Escape") {
+      renderInterceptUrlList();
+    }
+  });
+  input.addEventListener("blur", async () => {
+    await updateInterceptUrl(url, input.value);
+  });
+
+  currentText.replaceWith(input);
+  input.focus();
+  input.select();
 }
 
 function showInterceptUrlMenu(clientX, clientY) {
@@ -1265,13 +1317,6 @@ function downloadProject() {
     history: state.entries,
     selectedId: state.selectedId,
     nextSequenceId: state.nextSequenceId,
-    sort: state.sort,
-    hiddenExtensions: Array.from(state.hiddenExtensions),
-    blockedUrls: Array.from(state.blockedUrls),
-    interceptUrls: Array.from(state.interceptUrls),
-    historyPaneSize: state.historyPaneSize,
-    detailRequestPaneSize: state.detailRequestPaneSize,
-    historyColumns: state.historyColumns,
     repeaterTabs: state.repeaterTabs,
     activeRepeaterId: state.activeRepeaterId
   };
@@ -1311,14 +1356,8 @@ async function uploadProject(event) {
       nextSequenceIdFromEntries()
     );
     state.sort = normalizeProjectSort(project.sort);
-    state.hiddenExtensions = Array.isArray(project.hiddenExtensions)
-      ? new Set(project.hiddenExtensions.filter((extension) => FILTER_EXTENSIONS.includes(extension)))
-      : new Set(DEFAULT_HIDDEN_EXTENSIONS);
-    state.blockedUrls = Array.isArray(project.blockedUrls) ? new Set(project.blockedUrls) : new Set();
-    state.interceptUrls = Array.isArray(project.interceptUrls) ? new Set(project.interceptUrls) : new Set();
-    state.historyPaneSize = typeof project.historyPaneSize === "string" ? project.historyPaneSize : null;
-    state.detailRequestPaneSize = typeof project.detailRequestPaneSize === "string" ? project.detailRequestPaneSize : null;
-    state.historyColumns = normalizeProjectHistoryColumns(project.historyColumns);
+    state.blockedUrls = new Set();
+    state.interceptUrls = new Set();
     state.repeaterTabs = Array.isArray(project.repeaterTabs)
       ? project.repeaterTabs.map(normalizeProjectRepeaterTab)
       : [];
@@ -1326,14 +1365,9 @@ async function uploadProject(event) {
       ? project.activeRepeaterId
       : state.repeaterTabs[0]?.id || null;
 
-    for (const url of state.blockedUrls) {
-      await sendRuntimeMessage({ type: "block:add", url }).catch(() => {});
-    }
-
     renderHistory();
     renderExtensionFilters();
     renderInterceptUrlList();
-    applyLayoutSizes();
     renderDetail();
     renderRepeater();
   } catch (error) {

@@ -284,13 +284,19 @@ async function forwardIntercept(tabId, rawMessage) {
 
 async function fulfillPausedResponse(tabId, paused, rawResponse) {
   const parsed = parseRawResponse(rawResponse);
-  await chrome.debugger.sendCommand(debuggerTarget(tabId), "Fetch.fulfillRequest", {
+  const params = {
     requestId: paused.requestId,
     responseCode: parsed.status,
-    responsePhrase: parsed.statusText,
     responseHeaders: Object.entries(parsed.headers).map(([name, value]) => ({ name, value })),
     body: btoa(unescape(encodeURIComponent(parsed.body)))
-  });
+  };
+
+  const responsePhrase = sanitizeStatusText(parsed.statusText);
+  if (responsePhrase) {
+    params.responsePhrase = responsePhrase;
+  }
+
+  await chrome.debugger.sendCommand(debuggerTarget(tabId), "Fetch.fulfillRequest", params);
 }
 
 async function dropIntercept(tabId) {
@@ -501,10 +507,17 @@ function parseRawResponse(rawText) {
 
   return {
     status: Number(match[1]),
-    statusText: match[2] || "",
+    statusText: sanitizeStatusText(match[2] || ""),
     headers,
     body
   };
+}
+
+function sanitizeStatusText(value) {
+  return String(value || "")
+    .replace(/[\r\n]/g, " ")
+    .replace(/[^\t\x20-\x7e]/g, "")
+    .trim();
 }
 
 function findHeader(headers, wantedName) {
@@ -549,5 +562,16 @@ function isForbiddenRequestHeader(name) {
 
 function isForbiddenResponseHeader(name) {
   const normalized = name.toLowerCase();
-  return ["content-length", "transfer-encoding", "content-encoding"].includes(normalized);
+  return [
+    "connection",
+    "content-encoding",
+    "content-length",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade"
+  ].includes(normalized);
 }
