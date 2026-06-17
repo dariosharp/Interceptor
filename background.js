@@ -52,6 +52,11 @@ async function handleMessage(message) {
     return {};
   }
 
+  if (message.type === "block:remove") {
+    await unblockRequestUrl(message.url);
+    return {};
+  }
+
   if (message.type === "intercept:start") {
     await startIntercept(message.tabId);
     return {};
@@ -116,6 +121,23 @@ async function blockRequestUrl(url) {
         ]
       }
     }]
+  });
+}
+
+async function unblockRequestUrl(url) {
+  if (!url) {
+    throw new Error("URL is required.");
+  }
+
+  const rules = await chrome.declarativeNetRequest.getDynamicRules();
+  const rule = blockedUrls.get(url) || rules.find((candidate) => candidate.condition.regexFilter === exactUrlRegex(url));
+  if (!rule) {
+    return;
+  }
+
+  blockedUrls.delete(url);
+  await chrome.declarativeNetRequest.updateDynamicRules({
+    removeRuleIds: [rule.id]
   });
 }
 

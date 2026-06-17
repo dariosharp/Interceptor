@@ -324,6 +324,10 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
+.url.blocked-url {
+  color: var(--danger);
+}
+
 .history-time {
   color: var(--muted);
 }

@@ -63,6 +63,7 @@ const state = {
   detailRequestPaneSize: null,
   historyColumns: { ...DEFAULT_HISTORY_COLUMNS },
   urlMenuTargetId: null,
+  blockedUrls: new Set(),
   interceptPollId: null,
   pausedInterceptId: null
 };
@@ -82,6 +83,7 @@ const els = {
   columnResizers: Array.from(document.querySelectorAll(".column-resizer")),
   highlightMenu: document.querySelector("#highlightMenu"),
   urlMenu: document.querySelector("#urlMenu"),
+  urlBlockAction: document.querySelector("#urlBlockAction"),
   workspace: document.querySelector(".workspace"),
   workspaceResizeHandle: document.querySelector("#workspaceResizeHandle"),
   detailSplit: document.querySelector("#detailSplit"),
@@ -190,8 +192,8 @@ els.urlMenu.addEventListener("click", async (event) => {
     await copyText(entry.request.url);
   } else if (button.dataset.action === "delete") {
     deleteHistoryEntry(entry.id);
-  } else if (button.dataset.action === "block") {
-    await blockHistoryEntryUrl(entry.request.url);
+  } else if (button.dataset.action === "block" || button.dataset.action === "unblock") {
+    await toggleHistoryEntryUrlBlock(entry.request.url);
   }
 
   hideUrlMenu();
@@ -451,7 +453,7 @@ function renderHistory() {
     status.textContent = entry.response.status || "-";
 
     const url = document.createElement("span");
-    url.className = "url";
+    url.className = `url${state.blockedUrls.has(entry.request.url) ? " blocked-url" : ""}`;
     url.title = entry.request.url;
     url.textContent = entry.request.url;
 
@@ -603,6 +605,11 @@ function hideHighlightMenu() {
 }
 
 function showUrlMenu(clientX, clientY) {
+  const entry = state.entries.find((candidate) => candidate.id === state.urlMenuTargetId);
+  const blocked = entry ? state.blockedUrls.has(entry.request.url) : false;
+  els.urlBlockAction.dataset.action = blocked ? "unblock" : "block";
+  els.urlBlockAction.textContent = blocked ? "Unblock" : "Block";
+
   els.urlMenu.hidden = false;
   const rect = els.urlMenu.getBoundingClientRect();
   const left = Math.min(clientX, window.innerWidth - rect.width - 8);
@@ -641,8 +648,15 @@ function deleteHistoryEntry(entryId) {
   renderHistory();
 }
 
-async function blockHistoryEntryUrl(url) {
-  await sendRuntimeMessage({ type: "block:add", url });
+async function toggleHistoryEntryUrlBlock(url) {
+  if (state.blockedUrls.has(url)) {
+    await sendRuntimeMessage({ type: "block:remove", url });
+    state.blockedUrls.delete(url);
+  } else {
+    await sendRuntimeMessage({ type: "block:add", url });
+    state.blockedUrls.add(url);
+  }
+  renderHistory();
 }
 
 function formatHistoryTime(value) {
@@ -1063,6 +1077,7 @@ function downloadProject() {
     nextSequenceId: state.nextSequenceId,
     sort: state.sort,
     hiddenExtensions: Array.from(state.hiddenExtensions),
+    blockedUrls: Array.from(state.blockedUrls),
     historyPaneSize: state.historyPaneSize,
     detailRequestPaneSize: state.detailRequestPaneSize,
     historyColumns: state.historyColumns,
@@ -1108,6 +1123,7 @@ async function uploadProject(event) {
     state.hiddenExtensions = Array.isArray(project.hiddenExtensions)
       ? new Set(project.hiddenExtensions.filter((extension) => FILTER_EXTENSIONS.includes(extension)))
       : new Set(DEFAULT_HIDDEN_EXTENSIONS);
+    state.blockedUrls = Array.isArray(project.blockedUrls) ? new Set(project.blockedUrls) : new Set();
     state.historyPaneSize = typeof project.historyPaneSize === "string" ? project.historyPaneSize : null;
     state.detailRequestPaneSize = typeof project.detailRequestPaneSize === "string" ? project.detailRequestPaneSize : null;
     state.historyColumns = normalizeProjectHistoryColumns(project.historyColumns);
@@ -1117,6 +1133,10 @@ async function uploadProject(event) {
     state.activeRepeaterId = state.repeaterTabs.some((tab) => tab.id === project.activeRepeaterId)
       ? project.activeRepeaterId
       : state.repeaterTabs[0]?.id || null;
+
+    for (const url of state.blockedUrls) {
+      await sendRuntimeMessage({ type: "block:add", url }).catch(() => {});
+    }
 
     renderHistory();
     renderExtensionFilters();
