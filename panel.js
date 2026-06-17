@@ -432,7 +432,7 @@ async function setInterceptEnabled(enabled) {
 }
 
 function renderInterceptToggle() {
-  els.interceptToggle.textContent = state.interceptEnabled ? "Enable" : "Disabled";
+  els.interceptToggle.textContent = state.interceptEnabled ? "Enable" : "Disable";
   els.interceptToggle.classList.toggle("enabled", state.interceptEnabled);
   els.interceptToggle.classList.toggle("disabled", !state.interceptEnabled);
 }

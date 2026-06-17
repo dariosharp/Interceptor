@@ -511,11 +511,11 @@ textarea:focus-visible {
 }
 
 .intercept-toggle.enabled {
-  color: var(--danger);
+  color: var(--accent-strong);
 }
 
 .intercept-toggle.disabled {
-  color: var(--accent-strong);
+  color: var(--danger);
 }
 
 .repeater-tabs {
