@@ -1,6 +1,9 @@
 const DEBUGGER_VERSION = "1.3";
 const blockedUrls = new Map();
 const interceptSessions = new Map();
+const debuggerRepeaterSessions = new Map();
+const webRequestRepeaterSessions = new Map();
+let nextWebRequestRepeaterId = 1;
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   handleMessage(message)
@@ -11,7 +14,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 });
 
 chrome.debugger.onEvent.addListener((source, method, params) => {
+  handleDebuggerRepeaterEvent(source, method, params);
+
   if (method !== "Fetch.requestPaused") {
+    return;
+  }
+
+  if (handleDebuggerRepeaterPausedResponse(source, params)) {
     return;
   }
 
@@ -20,10 +29,29 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
 
 chrome.debugger.onDetach.addListener((source) => {
   interceptSessions.delete(source.tabId);
+  rejectDebuggerRepeater(source.tabId, new Error("Debugger detached before the repeater response completed."));
 });
+
+if (chrome.webRequest) {
+  chrome.webRequest.onHeadersReceived.addListener(
+    handleWebRequestRepeaterResponse,
+    { urls: ["<all_urls>"] },
+    ["responseHeaders"]
+  );
+  chrome.webRequest.onBeforeRedirect.addListener(
+    handleWebRequestRepeaterResponse,
+    { urls: ["<all_urls>"] },
+    ["responseHeaders"]
+  );
+}
 
 async function handlePausedRequest(source, params) {
   const session = interceptSessions.get(source.tabId);
+  if (shouldBypassInterceptForRepeater(source.tabId, params.request.url)) {
+    await continuePausedRequest(source.tabId, params.requestId);
+    return;
+  }
+
   if (!session || !session.enabled) {
     await continuePausedRequest(source.tabId, params.requestId);
     return;
@@ -63,6 +91,20 @@ async function handleMessage(message) {
 
   if (message.type === "repeater:send") {
     return { response: await sendRepeaterRequest(message.request) };
+  }
+
+  if (message.type === "repeater:sendDebugger") {
+    return { response: await sendDebuggerRepeaterRequest(message.tabId, message.request) };
+  }
+
+  if (message.type === "debugger:attach") {
+    await ensureDebuggerAttached(message.tabId, true);
+    return {};
+  }
+
+  if (message.type === "debugger:detach") {
+    await detachDebuggerSession(message.tabId);
+    return {};
   }
 
   if (message.type === "block:add") {
@@ -177,18 +219,51 @@ function exactUrlRegex(url) {
   return `^${url.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`;
 }
 
-async function startIntercept(tabId, urls, enabled = true) {
+async function ensureDebuggerAttached(tabId, keepAttached = false) {
   const target = debuggerTarget(tabId);
-  let session = interceptSessions.get(tabId);
+  let session = interceptSessions.get(Number(tabId));
 
   if (!session) {
     await chrome.debugger.attach(target, DEBUGGER_VERSION);
-    session = { enabled, attached: true, paused: null, urls: new Set(urls || []) };
-    interceptSessions.set(tabId, session);
+    session = {
+      enabled: false,
+      attached: true,
+      keepAttached: Boolean(keepAttached),
+      fetchMode: null,
+      paused: null,
+      urls: new Set()
+    };
+    interceptSessions.set(Number(tabId), session);
   }
+
+  session.keepAttached = session.keepAttached || Boolean(keepAttached);
+  session.attached = true;
+  return session;
+}
+
+async function detachDebuggerSession(tabId) {
+  tabId = Number(tabId);
+  const session = interceptSessions.get(tabId);
+  if (!session) {
+    return;
+  }
+
+  if (session.paused) {
+    await continuePausedRequest(tabId, session.paused.requestId);
+  }
+
+  await chrome.debugger.sendCommand(debuggerTarget(tabId), "Fetch.disable").catch(() => {});
+  await chrome.debugger.detach(debuggerTarget(tabId)).catch(() => {});
+  interceptSessions.delete(tabId);
+}
+
+async function startIntercept(tabId, urls, enabled = true) {
+  const target = debuggerTarget(tabId);
+  const session = await ensureDebuggerAttached(tabId, true);
 
   session.enabled = enabled;
   session.urls = new Set(urls || []);
+  session.fetchMode = "intercept";
   await chrome.debugger.sendCommand(target, "Fetch.enable", {
     patterns: [
       { urlPattern: "*", requestStage: "Request" },
@@ -233,8 +308,15 @@ async function stopIntercept(tabId) {
   }
 
   await chrome.debugger.sendCommand(debuggerTarget(tabId), "Fetch.disable").catch(() => {});
-  await chrome.debugger.detach(debuggerTarget(tabId)).catch(() => {});
-  interceptSessions.delete(tabId);
+  session.enabled = false;
+  session.paused = null;
+  session.fetchMode = null;
+  session.urls = new Set();
+
+  if (!session.keepAttached) {
+    await chrome.debugger.detach(debuggerTarget(tabId)).catch(() => {});
+    interceptSessions.delete(tabId);
+  }
 }
 
 function getPausedIntercept(tabId) {
@@ -370,6 +452,295 @@ function decodeResponseBody(responseBody) {
   }
 }
 
+async function sendDebuggerRepeaterRequest(tabId, request) {
+  tabId = Number(tabId);
+  if (!tabId) {
+    throw new Error("Inspected tab is required for debugger repeater.");
+  }
+  if (!request || !request.url) {
+    throw new Error("Request URL is required.");
+  }
+  if (debuggerRepeaterSessions.has(tabId)) {
+    throw new Error("Another debugger repeater request is already running.");
+  }
+
+  const target = debuggerTarget(tabId);
+  let debuggerSession = interceptSessions.get(tabId);
+  let attachedHere = false;
+  let fetchEnabledHere = false;
+  let timeoutId = null;
+  let evaluationPromise = null;
+  const headers = prepareRepeaterHeaders(request.headers);
+  const startedAt = Date.now();
+
+  const sessionPromise = new Promise((resolve, reject) => {
+    timeoutId = setTimeout(() => {
+      rejectDebuggerRepeater(tabId, new Error("Debugger repeater timed out."));
+    }, 30000);
+
+    debuggerRepeaterSessions.set(tabId, {
+      request,
+      method: String(request.method || "GET").toUpperCase(),
+      initialUrl: request.url,
+      startedAt,
+      requestIds: new Set(),
+      redirectResponses: [],
+      finalResponse: null,
+      resolve,
+      reject,
+      timeoutId
+    });
+  });
+  sessionPromise.catch(() => {});
+
+  try {
+    attachedHere = !debuggerSession?.attached;
+    debuggerSession = await ensureDebuggerAttached(tabId, true);
+
+    await chrome.debugger.sendCommand(target, "Network.enable");
+    if (debuggerSession.fetchMode !== "intercept") {
+      await chrome.debugger.sendCommand(target, "Fetch.enable", {
+        patterns: [{ urlPattern: "*", requestStage: "Response" }]
+      });
+      debuggerSession.fetchMode = "repeater";
+      fetchEnabledHere = true;
+    }
+
+    evaluationPromise = chrome.debugger.sendCommand(target, "Runtime.evaluate", {
+      expression: `(${debuggerRepeaterFetchSource()})(${JSON.stringify({
+        request: {
+          method: request.method || "GET",
+          url: request.url,
+          headers: headers.headers,
+          body: request.body || ""
+        }
+      })})`,
+      awaitPromise: true,
+      returnByValue: true
+    });
+    evaluationPromise.catch((error) => {
+      const session = debuggerRepeaterSessions.get(tabId);
+      if (session && !session.redirectResponses.length && !session.finalResponse) {
+        rejectDebuggerRepeater(tabId, error);
+      }
+    });
+
+    const response = await sessionPromise;
+    await evaluationPromise.catch(() => {});
+    response.skippedHeaders = headers.skippedHeaders;
+    return response;
+  } catch (error) {
+    rejectDebuggerRepeater(tabId, error);
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+    debuggerRepeaterSessions.delete(tabId);
+    if (fetchEnabledHere) {
+      await chrome.debugger.sendCommand(target, "Fetch.disable").catch(() => {});
+      const session = interceptSessions.get(tabId);
+      if (session?.fetchMode === "repeater") {
+        session.fetchMode = null;
+      }
+    }
+    await chrome.debugger.sendCommand(target, "Network.disable").catch(() => {});
+    const session = interceptSessions.get(tabId);
+    if (attachedHere && !session?.keepAttached) {
+      await chrome.debugger.detach(target).catch(() => {});
+      interceptSessions.delete(tabId);
+    }
+  }
+}
+
+function handleDebuggerRepeaterEvent(source, method, params) {
+  const session = debuggerRepeaterSessions.get(source.tabId);
+  if (!session) {
+    return;
+  }
+
+  if (method === "Network.requestWillBeSent") {
+    handleDebuggerRepeaterRequest(session, params);
+    return;
+  }
+
+  if (!session.requestIds.has(params?.requestId)) {
+    return;
+  }
+
+  if (method === "Network.responseReceived") {
+    session.finalResponse = params.response;
+    return;
+  }
+
+  if (method === "Network.loadingFinished") {
+    resolveDebuggerRepeater(source.tabId, params.requestId);
+    return;
+  }
+
+  if (method === "Network.loadingFailed") {
+    if (session.redirectResponses.length || session.finalResponse) {
+      resolveDebuggerRepeater(source.tabId, params.requestId);
+    } else {
+      rejectDebuggerRepeater(source.tabId, new Error(params.errorText || "Debugger repeater request failed."));
+    }
+  }
+}
+
+function handleDebuggerRepeaterPausedResponse(source, params) {
+  const session = debuggerRepeaterSessions.get(source.tabId);
+  if (!session || !params.responseStatusCode) {
+    return false;
+  }
+
+  const method = String(params.request?.method || "").toUpperCase();
+  if (params.request?.url !== session.initialUrl || method !== session.method) {
+    return false;
+  }
+
+  session.requestIds.add(params.networkId || params.requestId);
+  resolveDebuggerRepeaterPausedResponse(source.tabId, params);
+  return true;
+}
+
+async function resolveDebuggerRepeaterPausedResponse(tabId, params) {
+  const session = debuggerRepeaterSessions.get(tabId);
+  if (!session) {
+    return;
+  }
+
+  const headers = {};
+  for (const header of params.responseHeaders || []) {
+    headers[header.name] = header.value;
+  }
+
+  const responseBody = await getResponseBody(tabId, params.requestId);
+  clearTimeout(session.timeoutId);
+  debuggerRepeaterSessions.delete(tabId);
+  session.resolve({
+    url: params.request.url,
+    status: params.responseStatusCode,
+    statusText: params.responseStatusText || "",
+    httpVersion: "HTTP/1.1",
+    headers,
+    body: decodeResponseBody(responseBody),
+    durationMs: Date.now() - session.startedAt,
+    redirectChain: []
+  });
+
+  await chrome.debugger.sendCommand(debuggerTarget(tabId), "Fetch.failRequest", {
+    requestId: params.requestId,
+    errorReason: "Aborted"
+  }).catch(() => {});
+}
+
+function handleDebuggerRepeaterRequest(session, params) {
+  const eventMethod = String(params.request?.method || "").toUpperCase();
+  const isInitialRequest = params.request?.url === session.initialUrl && eventMethod === session.method;
+  if (isInitialRequest || session.requestIds.has(params.requestId)) {
+    session.requestIds.add(params.requestId);
+  }
+
+  if (session.requestIds.has(params.requestId) && params.redirectResponse) {
+    session.redirectResponses.push(params.redirectResponse);
+  }
+}
+
+async function resolveDebuggerRepeater(tabId, requestId) {
+  const session = debuggerRepeaterSessions.get(tabId);
+  if (!session) {
+    return;
+  }
+
+  try {
+    const selectedResponse = session.redirectResponses[0] || session.finalResponse;
+    if (!selectedResponse) {
+      throw new Error("Debugger repeater did not capture a response.");
+    }
+
+    const isRedirectResponse = session.redirectResponses.includes(selectedResponse);
+    const responseBody = isRedirectResponse
+      ? { body: "", base64Encoded: false }
+      : await getNetworkResponseBody(tabId, requestId);
+
+    clearTimeout(session.timeoutId);
+    debuggerRepeaterSessions.delete(tabId);
+    session.resolve({
+      url: selectedResponse.url,
+      status: selectedResponse.status,
+      statusText: selectedResponse.statusText || "",
+      httpVersion: selectedResponse.protocol || "HTTP/1.1",
+      headers: selectedResponse.headers || {},
+      body: decodeResponseBody(responseBody),
+      durationMs: Date.now() - session.startedAt,
+      redirectChain: session.redirectResponses.map((response) => ({
+        url: response.url,
+        status: response.status,
+        statusText: response.statusText || "",
+        httpVersion: response.protocol || "HTTP/1.1",
+        headers: response.headers || {}
+      }))
+    });
+  } catch (error) {
+    rejectDebuggerRepeater(tabId, error);
+  }
+}
+
+function rejectDebuggerRepeater(tabId, error) {
+  const session = debuggerRepeaterSessions.get(tabId);
+  if (!session) {
+    return;
+  }
+  clearTimeout(session.timeoutId);
+  debuggerRepeaterSessions.delete(tabId);
+  session.reject(error);
+}
+
+async function getNetworkResponseBody(tabId, requestId) {
+  try {
+    return await chrome.debugger.sendCommand(debuggerTarget(tabId), "Network.getResponseBody", { requestId });
+  } catch (_error) {
+    return { body: "", base64Encoded: false };
+  }
+}
+
+function shouldBypassInterceptForRepeater(tabId, url) {
+  const session = debuggerRepeaterSessions.get(tabId);
+  return Boolean(session && (url === session.initialUrl || session.requestIds.size));
+}
+
+function prepareRepeaterHeaders(rawHeaders) {
+  const headers = {};
+  const skippedHeaders = [];
+  for (const [name, value] of Object.entries(rawHeaders || {})) {
+    if (isForbiddenRequestHeader(name) || name.toLowerCase() === "host") {
+      skippedHeaders.push(name);
+      continue;
+    }
+    headers[name] = value;
+  }
+  return { headers, skippedHeaders };
+}
+
+function debuggerRepeaterFetchSource() {
+  return String(async function debuggerRepeaterFetch(payload) {
+    const request = payload.request;
+    const options = {
+      method: request.method || "GET",
+      headers: request.headers || {},
+      credentials: "include",
+      redirect: "follow",
+      cache: "no-store"
+    };
+
+    if (!["GET", "HEAD"].includes(options.method.toUpperCase()) && request.body) {
+      options.body = request.body;
+    }
+
+    const response = await fetch(request.url, options);
+    await response.text().catch(() => "");
+    return true;
+  });
+}
+
 async function sendRepeaterRequest(request) {
   if (!request || !request.url) {
     throw new Error("Request URL is required.");
@@ -388,7 +759,7 @@ async function sendRepeaterRequest(request) {
   const options = {
     method: request.method || "GET",
     headers,
-    redirect: "follow",
+    redirect: "manual",
     credentials: "include",
     cache: "no-store"
   };
@@ -397,15 +768,33 @@ async function sendRepeaterRequest(request) {
     options.body = request.body;
   }
 
+  const captureId = startWebRequestRepeaterCapture(request);
   const startedAt = Date.now();
-  const fetchResponse = await fetch(request.url, options);
-  const body = await fetchResponse.text();
-  const durationMs = Date.now() - startedAt;
+  let fetchResponse;
+  let body = "";
+  let durationMs = 0;
+  try {
+    fetchResponse = await fetch(request.url, options);
+    body = await fetchResponse.text();
+    durationMs = Date.now() - startedAt;
+  } finally {
+    stopWebRequestRepeaterCapture(captureId);
+  }
 
   const responseHeaders = {};
   fetchResponse.headers.forEach((value, name) => {
     responseHeaders[name] = value;
   });
+
+  const capturedResponse = getWebRequestRepeaterCapture(captureId);
+  if (capturedResponse && (fetchResponse.status === 0 || isRedirectStatus(capturedResponse.status))) {
+    return {
+      ...capturedResponse,
+      body: isRedirectStatus(capturedResponse.status) ? "" : body,
+      durationMs,
+      skippedHeaders
+    };
+  }
 
   return {
     url: fetchResponse.url,
@@ -416,6 +805,76 @@ async function sendRepeaterRequest(request) {
     durationMs,
     skippedHeaders
   };
+}
+
+function startWebRequestRepeaterCapture(request) {
+  const id = nextWebRequestRepeaterId++;
+  webRequestRepeaterSessions.set(id, {
+    method: String(request.method || "GET").toUpperCase(),
+    url: request.url,
+    startedAt: Date.now(),
+    response: null
+  });
+  return id;
+}
+
+function stopWebRequestRepeaterCapture(id) {
+  const session = webRequestRepeaterSessions.get(id);
+  if (session) {
+    session.stoppedAt = Date.now();
+  }
+}
+
+function getWebRequestRepeaterCapture(id) {
+  const session = webRequestRepeaterSessions.get(id);
+  const response = session?.response || null;
+  webRequestRepeaterSessions.delete(id);
+  return response;
+}
+
+function handleWebRequestRepeaterResponse(details) {
+  for (const session of webRequestRepeaterSessions.values()) {
+    if (session.response || details.url !== session.url || details.method !== session.method) {
+      continue;
+    }
+    if (Date.now() - session.startedAt > 30000) {
+      continue;
+    }
+
+    session.response = {
+      url: details.url,
+      status: details.statusCode || 0,
+      statusText: statusTextFromStatusLine(details.statusLine),
+      httpVersion: httpVersionFromStatusLine(details.statusLine),
+      headers: headersArrayToObject(details.responseHeaders),
+      body: ""
+    };
+  }
+}
+
+function headersArrayToObject(headers) {
+  const result = {};
+  for (const header of headers || []) {
+    if (!header.name) {
+      continue;
+    }
+    result[header.name] = header.value || "";
+  }
+  return result;
+}
+
+function statusTextFromStatusLine(statusLine) {
+  const match = String(statusLine || "").match(/^\S+\s+\d{3}\s*(.*)$/);
+  return match ? match[1].trim() : "";
+}
+
+function httpVersionFromStatusLine(statusLine) {
+  const match = String(statusLine || "").match(/^(HTTP\/\d(?:\.\d)?)/i);
+  return match ? match[1].toUpperCase() : "HTTP/1.1";
+}
+
+function isRedirectStatus(status) {
+  return status >= 300 && status < 400;
 }
 
 function formatHeaders(headers) {

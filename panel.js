@@ -1404,12 +1404,32 @@ async function sendRuntimeMessage(message) {
 }
 
 async function sendRepeaterRequest(parsedRequest) {
+  const debuggerResult = await chrome.runtime.sendMessage({
+    type: "repeater:sendDebugger",
+    tabId: state.inspectedTabId,
+    request: parsedRequest
+  });
+
+  if (debuggerResult?.ok && debuggerResult.response?.status !== 0) {
+    return {
+      response: debuggerResult.response,
+      transport: "debugger"
+    };
+  }
+
+  const debuggerFailure = debuggerResult?.ok && debuggerResult.response?.status === 0
+    ? "Debugger repeater returned an opaque redirect with status 0."
+    : debuggerResult?.error;
+
   const backgroundResult = await chrome.runtime.sendMessage({
     type: "repeater:send",
     request: parsedRequest
   });
 
   if (backgroundResult?.ok) {
+    if (backgroundResult.response?.status === 0) {
+      throw new Error("Repeater could not capture the real redirect status. Reload the extension and try again.");
+    }
     return {
       response: backgroundResult.response,
       transport: "extension"
@@ -1417,14 +1437,18 @@ async function sendRepeaterRequest(parsedRequest) {
   }
 
   const backgroundError = backgroundResult?.error || "Extension fetch failed.";
+  const debuggerError = debuggerFailure ? `Debugger repeater failed: ${debuggerFailure}\n` : "";
   try {
     const response = await sendRepeaterRequestFromInspectedPage(parsedRequest);
+    if (response?.status === 0) {
+      throw new Error("Page fallback returned an opaque redirect with status 0.");
+    }
     return {
       response,
       transport: "page"
     };
   } catch (fallbackError) {
-    throw new Error(`${backgroundError}\nPage fallback failed: ${fallbackError.message || String(fallbackError)}`);
+    throw new Error(`${debuggerError}${backgroundError}\nPage fallback failed: ${fallbackError.message || String(fallbackError)}`);
   }
 }
 
@@ -1488,7 +1512,7 @@ function inspectedPageFetchSource() {
         method: request.method || "GET",
         headers,
         credentials: "include",
-        redirect: "follow",
+        redirect: "manual",
         cache: "no-store"
       };
 
@@ -1812,9 +1836,17 @@ function isPseudoHeader(name) {
   return typeof name === "string" && name.startsWith(":");
 }
 
+async function initializeDebuggerSession() {
+  await sendRuntimeMessage({
+    type: "debugger:attach",
+    tabId: state.inspectedTabId
+  }).catch(() => {});
+}
+
 renderExtensionFilters();
 applyLayoutSizes();
 renderHistory();
 renderDetail();
 renderRepeater();
 updateAllEditorHighlights();
+initializeDebuggerSession();
