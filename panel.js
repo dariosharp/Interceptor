@@ -1488,7 +1488,7 @@ function inspectedPageFetchSource() {
         method: request.method || "GET",
         headers,
         credentials: "include",
-        redirect: "manual",
+        redirect: "follow",
         cache: "no-store"
       };
 

@@ -388,7 +388,7 @@ async function sendRepeaterRequest(request) {
   const options = {
     method: request.method || "GET",
     headers,
-    redirect: "manual",
+    redirect: "follow",
     credentials: "include",
     cache: "no-store"
   };
