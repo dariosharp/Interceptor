@@ -28,7 +28,7 @@
       <section class="workspace">
         <aside class="history-pane" aria-label="Request history">
           <div class="filters">
-            <input id="searchInput" type="search" placeholder="Filter URL, method, status">
+            <input id="searchInput" type="search" placeholder="Filter or exclude: login !google.com !'facebook.com'">
             <details class="extension-filter">
               <summary>Extensions</summary>
               <div id="extensionFilterList" class="extension-filter-list"></div>
@@ -85,7 +85,10 @@
                   <strong>Request</strong>
                   <button id="sendToRepeater" type="button">Send to Repeater</button>
                 </div>
-                <textarea id="requestText" spellcheck="false" readonly></textarea>
+                <div class="highlight-editor">
+                  <pre class="highlight-layer" aria-hidden="true"></pre>
+                  <textarea id="requestText" spellcheck="false" readonly></textarea>
+                </div>
               </section>
               <div id="detailResizeHandle" class="resize-handle" role="separator" aria-orientation="horizontal" tabindex="0"></div>
               <section class="editor-block">
@@ -93,7 +96,10 @@
                   <strong>Response</strong>
                   <span id="responseMeta"></span>
                 </div>
-                <textarea id="responseText" spellcheck="false" readonly></textarea>
+                <div class="highlight-editor">
+                  <pre class="highlight-layer" aria-hidden="true"></pre>
+                  <textarea id="responseText" spellcheck="false" readonly></textarea>
+                </div>
               </section>
             </div>
           </section>
@@ -110,7 +116,10 @@
                     <strong>Editable Request</strong>
                     <button id="sendRequest" type="button">Send</button>
                   </div>
-                  <textarea id="repeaterRequest" spellcheck="false"></textarea>
+                  <div class="highlight-editor">
+                    <pre class="highlight-layer" aria-hidden="true"></pre>
+                    <textarea id="repeaterRequest" spellcheck="false"></textarea>
+                  </div>
                 </section>
                 <div id="repeaterResizeHandle" class="resize-handle" role="separator" aria-orientation="horizontal" tabindex="0"></div>
                 <section class="editor-block">
@@ -118,7 +127,10 @@
                     <strong>Repeater Response</strong>
                     <span id="repeaterMeta"></span>
                   </div>
-                  <textarea id="repeaterResponse" spellcheck="false" readonly></textarea>
+                  <div class="highlight-editor">
+                    <pre class="highlight-layer" aria-hidden="true"></pre>
+                    <textarea id="repeaterResponse" spellcheck="false" readonly></textarea>
+                  </div>
                 </section>
               </div>
             </div>
@@ -129,7 +141,10 @@
               <div class="intercept-bar">
                 <strong id="interceptStatus">Waiting for request</strong>
               </div>
-              <textarea id="interceptRequest" spellcheck="false"></textarea>
+              <div class="highlight-editor">
+                <pre class="highlight-layer" aria-hidden="true"></pre>
+                <textarea id="interceptRequest" spellcheck="false"></textarea>
+              </div>
             </div>
           </section>
         </section>
@@ -145,6 +160,9 @@
       <div id="urlMenu" class="url-menu" hidden>
         <button type="button" data-action="copy">Copy</button>
         <button type="button" data-action="delete">Delete</button>
+        <button type="button" data-action="repeater">Send to Repeater</button>
+        <button type="button" data-action="filter">Filter for</button>
+        <button type="button" data-action="exclude">Exclude</button>
         <button id="urlInterceptAction" type="button" data-action="intercept">Intercept</button>
         <button id="urlBlockAction" type="button" data-action="block">Block</button>
       </div>

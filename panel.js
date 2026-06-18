@@ -118,6 +118,14 @@ const els = {
   }
 };
 
+els.rawEditors = [
+  els.requestText,
+  els.responseText,
+  els.repeaterRequest,
+  els.repeaterResponse,
+  els.interceptRequest
+];
+
 chrome.devtools.network.onRequestFinished.addListener((harEntry) => {
   if (!state.capturing) {
     return;
@@ -203,6 +211,12 @@ els.urlMenu.addEventListener("click", async (event) => {
     await copyText(entry.request.url);
   } else if (button.dataset.action === "delete") {
     deleteHistoryEntry(entry.id);
+  } else if (button.dataset.action === "repeater") {
+    sendEntryToRepeater(entry);
+  } else if (button.dataset.action === "filter") {
+    addHistoryFilter(entry.request.url, false);
+  } else if (button.dataset.action === "exclude") {
+    addHistoryFilter(entry.request.url, true);
   } else if (button.dataset.action === "intercept" || button.dataset.action === "unintercept") {
     await toggleHistoryEntryUrlIntercept(entry.request.url);
   } else if (button.dataset.action === "block" || button.dataset.action === "unblock") {
@@ -248,12 +262,7 @@ els.sendToRepeater.addEventListener("click", () => {
   if (!entry) {
     return;
   }
-  syncActiveRepeaterTab();
-  const tab = createRepeaterTab(entry);
-  state.repeaterTabs.push(tab);
-  state.activeRepeaterId = tab.id;
-  renderRepeater();
-  switchView("repeater");
+  sendEntryToRepeater(entry);
 });
 
 els.sendRequest.addEventListener("click", async () => {
@@ -270,19 +279,11 @@ els.sendRequest.addEventListener("click", async () => {
 
   try {
     const parsed = parseRawRequest(tab.requestText);
-    const result = await chrome.runtime.sendMessage({
-      type: "repeater:send",
-      request: parsed
-    });
-
-    if (!result || !result.ok) {
-      throw new Error(result?.error || "Request failed.");
-    }
-
+    const result = await sendRepeaterRequest(parsed);
     const skipped = result.response.skippedHeaders?.length
       ? ` | skipped: ${result.response.skippedHeaders.join(", ")}`
       : "";
-    tab.meta = `${result.response.status} ${result.response.statusText} | ${result.response.durationMs} ms${skipped}`;
+    tab.meta = `${result.response.status} ${result.response.statusText} | ${result.response.durationMs} ms | ${result.transport}${skipped}`;
     tab.responseText = formatRawResponse(result.response);
     tab.updatedAt = new Date().toISOString();
   } catch (error) {
@@ -298,6 +299,12 @@ els.interceptToggle.addEventListener("click", async () => {
 });
 
 els.repeaterRequest.addEventListener("input", syncActiveRepeaterTab);
+els.interceptRequest.addEventListener("input", () => updateEditorHighlight(els.interceptRequest));
+
+for (const editor of els.rawEditors) {
+  editor.addEventListener("input", () => updateEditorHighlight(editor));
+  editor.addEventListener("scroll", () => syncEditorScroll(editor));
+}
 
 els.repeaterResizeHandle.addEventListener("pointerdown", startRepeaterResize);
 els.repeaterResizeHandle.addEventListener("keydown", resizeRepeaterWithKeyboard);
@@ -414,6 +421,7 @@ async function pollIntercept() {
   const stage = result.paused.stage === "response" ? "Response" : "Request";
   els.interceptStatus.textContent = `${stage}: ${result.paused.method} ${result.paused.url}`;
   els.interceptRequest.value = result.paused.rawMessage;
+  updateEditorHighlight(els.interceptRequest);
 }
 
 async function setInterceptEnabled(enabled) {
@@ -481,7 +489,7 @@ function headersToObject(headers) {
 }
 
 function renderHistory() {
-  const query = els.searchInput.value.trim().toLowerCase();
+  const filter = parseHistoryFilter(els.searchInput.value);
   const visibleEntries = state.entries.filter((entry) => {
     const haystack = [
       entry.sequenceId,
@@ -490,7 +498,7 @@ function renderHistory() {
       entry.request.url,
       formatHistoryTime(entry.startedDateTime)
     ].join(" ").toLowerCase();
-    return haystack.includes(query) && !isHiddenByExtension(entry);
+    return matchesHistoryFilter(haystack, filter) && !isHiddenByExtension(entry);
   }).sort(compareHistoryEntries);
 
   updateHistorySortButtons();
@@ -541,6 +549,40 @@ function renderHistory() {
     item.append(button);
     return item;
   }));
+}
+
+function parseHistoryFilter(value) {
+  const include = [];
+  const exclude = [];
+  const pattern = /(!)?\s*'([^']*)'|(!)?\s*"([^"]*)"|(!)?\s*([^&\s]+)/g;
+  let match;
+
+  while ((match = pattern.exec(value || ""))) {
+    const negated = Boolean(match[1] || match[3] || match[5]);
+    const term = (match[2] || match[4] || match[6] || "").trim().toLowerCase();
+    if (!term) {
+      continue;
+    }
+    if (negated) {
+      exclude.push(term);
+    } else {
+      include.push(term);
+    }
+  }
+
+  return { include, exclude };
+}
+
+function matchesHistoryFilter(haystack, filter) {
+  return filter.include.every((term) => haystack.includes(term))
+    && filter.exclude.every((term) => !haystack.includes(term));
+}
+
+function addHistoryFilter(value, excluded) {
+  const token = excluded ? `!'${value}'` : `'${value}'`;
+  const current = els.searchInput.value.trim();
+  els.searchInput.value = current ? `${current} ${token}` : token;
+  renderHistory();
 }
 
 function renderExtensionFilters() {
@@ -916,12 +958,16 @@ function renderDetail() {
     els.requestText.value = "";
     els.responseText.value = "";
     els.responseMeta.textContent = "";
+    updateEditorHighlight(els.requestText);
+    updateEditorHighlight(els.responseText);
     return;
   }
 
   els.requestText.value = formatRawRequest(entry.request);
   els.responseText.value = formatRawResponse(entry.response);
   els.responseMeta.textContent = `${entry.response.status} ${entry.response.statusText} | ${entry.time} ms`;
+  updateEditorHighlight(els.requestText);
+  updateEditorHighlight(els.responseText);
 }
 
 function createRepeaterTab(entry) {
@@ -937,6 +983,15 @@ function createRepeaterTab(entry) {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
+}
+
+function sendEntryToRepeater(entry) {
+  syncActiveRepeaterTab();
+  const tab = createRepeaterTab(entry);
+  state.repeaterTabs.push(tab);
+  state.activeRepeaterId = tab.id;
+  renderRepeater();
+  switchView("repeater");
 }
 
 function renderRepeater() {
@@ -993,6 +1048,8 @@ function renderRepeaterEditors() {
     els.repeaterRequest.value = "";
     els.repeaterResponse.value = "";
     els.repeaterMeta.textContent = "";
+    updateEditorHighlight(els.repeaterRequest);
+    updateEditorHighlight(els.repeaterResponse);
     return;
   }
 
@@ -1000,6 +1057,8 @@ function renderRepeaterEditors() {
   els.repeaterRequest.value = tab.requestText;
   els.repeaterResponse.value = tab.responseText;
   els.repeaterMeta.textContent = tab.meta;
+  updateEditorHighlight(els.repeaterRequest);
+  updateEditorHighlight(els.repeaterResponse);
 }
 
 function closeRepeaterTab(tabId) {
@@ -1255,12 +1314,215 @@ function applyLayoutSizes() {
   applyHistoryColumnSizes();
 }
 
+function updateAllEditorHighlights() {
+  for (const editor of els.rawEditors) {
+    updateEditorHighlight(editor);
+  }
+}
+
+function updateEditorHighlight(editor) {
+  const layer = editor.previousElementSibling;
+  if (!layer?.classList.contains("highlight-layer")) {
+    return;
+  }
+  layer.innerHTML = highlightRawMessage(editor.value);
+  syncEditorScroll(editor);
+}
+
+function syncEditorScroll(editor) {
+  const layer = editor.previousElementSibling;
+  if (!layer?.classList.contains("highlight-layer")) {
+    return;
+  }
+  layer.scrollTop = editor.scrollTop;
+  layer.scrollLeft = editor.scrollLeft;
+}
+
+function highlightRawMessage(rawText) {
+  const normalized = rawText.replace(/\r\n/g, "\n");
+  const separator = normalized.indexOf("\n\n");
+  const head = separator >= 0 ? normalized.slice(0, separator) : normalized;
+  const body = separator >= 0 ? normalized.slice(separator + 2) : "";
+  const highlightedHead = head.split("\n").map(highlightHeaderLine).join("\n");
+
+  if (separator < 0) {
+    return highlightedHead || " ";
+  }
+
+  return `${highlightedHead}\n\n${highlightBody(body) || " "}`;
+}
+
+function highlightHeaderLine(line) {
+  const colon = line.indexOf(":");
+  if (colon <= 0 || /^\S+\s+\S+/.test(line)) {
+    return escapeHtml(line);
+  }
+
+  const name = line.slice(0, colon + 1);
+  const value = line.slice(colon + 1);
+  return `<span class="tok-header-name">${escapeHtml(name)}</span><span class="tok-header-value">${escapeHtml(value)}</span>`;
+}
+
+function highlightBody(body) {
+  if (!body || !looksLikeParameterBody(body)) {
+    return escapeHtml(body);
+  }
+
+  return body.split(/([&;\n])/).map((part) => {
+    if (part === "&" || part === ";" || part === "\n") {
+      return escapeHtml(part);
+    }
+
+    const equals = part.indexOf("=");
+    if (equals < 0) {
+      return escapeHtml(part);
+    }
+
+    const name = part.slice(0, equals);
+    const value = part.slice(equals + 1);
+    return `<span class="tok-param-name">${escapeHtml(name)}</span>=<span class="tok-param-value">${escapeHtml(value)}</span>`;
+  }).join("");
+}
+
+function looksLikeParameterBody(body) {
+  return /(^|[&;\n])[^&;\n=]+=[^&;\n]*/.test(body);
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 async function sendRuntimeMessage(message) {
   const result = await chrome.runtime.sendMessage(message);
   if (!result || !result.ok) {
     throw new Error(result?.error || "Extension command failed.");
   }
   return result;
+}
+
+async function sendRepeaterRequest(parsedRequest) {
+  const backgroundResult = await chrome.runtime.sendMessage({
+    type: "repeater:send",
+    request: parsedRequest
+  });
+
+  if (backgroundResult?.ok) {
+    return {
+      response: backgroundResult.response,
+      transport: "extension"
+    };
+  }
+
+  const backgroundError = backgroundResult?.error || "Extension fetch failed.";
+  try {
+    const response = await sendRepeaterRequestFromInspectedPage(parsedRequest);
+    return {
+      response,
+      transport: "page"
+    };
+  } catch (fallbackError) {
+    throw new Error(`${backgroundError}\nPage fallback failed: ${fallbackError.message || String(fallbackError)}`);
+  }
+}
+
+function sendRepeaterRequestFromInspectedPage(parsedRequest) {
+  const expression = `(${inspectedPageFetchSource()})(${JSON.stringify(parsedRequest)})`;
+  return new Promise((resolve, reject) => {
+    chrome.devtools.inspectedWindow.eval(expression, { useContentScriptContext: false }, (result, exceptionInfo) => {
+      if (exceptionInfo) {
+        reject(new Error(exceptionInfo.value || exceptionInfo.description || "Inspected page evaluation failed."));
+        return;
+      }
+      if (!result || !result.ok) {
+        reject(new Error(result?.error || "Inspected page fetch failed."));
+        return;
+      }
+      resolve(result.response);
+    });
+  });
+}
+
+function inspectedPageFetchSource() {
+  return String(async function inspectedPageFetch(request) {
+    function forbiddenHeader(name) {
+      const normalized = name.toLowerCase();
+      return [
+        "accept-charset",
+        "accept-encoding",
+        "access-control-request-headers",
+        "access-control-request-method",
+        "connection",
+        "content-length",
+        "cookie",
+        "date",
+        "dnt",
+        "expect",
+        "host",
+        "keep-alive",
+        "origin",
+        "permissions-policy",
+        "referer",
+        "te",
+        "trailer",
+        "transfer-encoding",
+        "upgrade",
+        "via"
+      ].includes(normalized) || normalized.startsWith("proxy-") || normalized.startsWith("sec-") || normalized.startsWith(":");
+    }
+
+    try {
+      const headers = new Headers();
+      const skippedHeaders = [];
+      for (const [name, value] of Object.entries(request.headers || {})) {
+        if (forbiddenHeader(name)) {
+          skippedHeaders.push(name);
+          continue;
+        }
+        headers.set(name, value);
+      }
+
+      const options = {
+        method: request.method || "GET",
+        headers,
+        credentials: "include",
+        redirect: "manual",
+        cache: "no-store"
+      };
+
+      if (!["GET", "HEAD"].includes(options.method.toUpperCase()) && request.body) {
+        options.body = request.body;
+      }
+
+      const startedAt = Date.now();
+      const fetchResponse = await fetch(request.url, options);
+      const body = await fetchResponse.text();
+      const responseHeaders = {};
+      fetchResponse.headers.forEach((value, name) => {
+        responseHeaders[name] = value;
+      });
+
+      return {
+        ok: true,
+        response: {
+          url: fetchResponse.url,
+          status: fetchResponse.status,
+          statusText: fetchResponse.statusText,
+          headers: responseHeaders,
+          body,
+          durationMs: Date.now() - startedAt,
+          skippedHeaders
+        }
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error.message || String(error)
+      };
+    }
+  });
 }
 
 async function forwardCurrentIntercept() {
@@ -1292,6 +1554,7 @@ function clearInterceptEditor(status) {
   state.pausedInterceptId = null;
   els.interceptStatus.textContent = status;
   els.interceptRequest.value = "";
+  updateEditorHighlight(els.interceptRequest);
 }
 
 function selectedEntry() {
@@ -1540,3 +1803,4 @@ applyLayoutSizes();
 renderHistory();
 renderDetail();
 renderRepeater();
+updateAllEditorHighlights();
