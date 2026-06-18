@@ -586,16 +586,28 @@ function addHistoryFilter(value, excluded) {
 }
 
 function renderExtensionFilters() {
-  els.extensionFilterList.replaceChildren(...FILTER_EXTENSIONS.map((extension) => {
+  const title = document.createElement("div");
+  title.className = "extension-filter-title";
+  title.textContent = "Show in history";
+
+  const hint = document.createElement("div");
+  hint.className = "extension-filter-hint";
+  hint.textContent = "Checked extensions are visible.";
+
+  const options = document.createElement("div");
+  options.className = "extension-filter-options";
+
+  options.replaceChildren(...FILTER_EXTENSIONS.map((extension) => {
     const label = document.createElement("label");
+    label.className = "extension-filter-option";
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
-    checkbox.checked = state.hiddenExtensions.has(extension);
+    checkbox.checked = !state.hiddenExtensions.has(extension);
     checkbox.addEventListener("change", () => {
       if (checkbox.checked) {
-        state.hiddenExtensions.add(extension);
-      } else {
         state.hiddenExtensions.delete(extension);
+      } else {
+        state.hiddenExtensions.add(extension);
       }
       renderHistory();
     });
@@ -606,6 +618,8 @@ function renderExtensionFilters() {
     label.append(checkbox, text);
     return label;
   }));
+
+  els.extensionFilterList.replaceChildren(title, hint, options);
 }
 
 function applyHistoryColumnSizes() {
