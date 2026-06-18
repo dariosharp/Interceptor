@@ -331,7 +331,7 @@ async function setMode(mode) {
   state.mode = mode;
   document.querySelector(".app").classList.toggle("intercept-mode", mode === "intercept");
   els.modeSelect.value = mode;
-  state.capturing = mode === "capturing";
+  state.capturing = mode === "capturing" || mode === "intercept";
   els.toggleCapture.textContent = state.capturing ? "Pause" : "Resume";
   renderModeLayout();
 
@@ -1697,7 +1697,7 @@ function normalizeProjectHistoryColumns(columns) {
 function formatRawRequest(request) {
   const url = new URL(request.url);
   const path = `${url.pathname}${url.search}`;
-  const firstLine = `${request.method} ${path || "/"} ${request.httpVersion || "HTTP/1.1"}`;
+  const firstLine = `${request.method} ${path || "/"} ${formatHttpVersion(request.httpVersion)}`;
   const headers = {
     Host: url.host,
     ...request.headers
@@ -1707,12 +1707,26 @@ function formatRawRequest(request) {
 }
 
 function formatRawResponse(response) {
-  const firstLine = `${response.httpVersion || "HTTP/1.1"} ${response.status} ${response.statusText || ""}`.trim();
+  const firstLine = `${formatHttpVersion(response.httpVersion)} ${response.status} ${response.statusText || ""}`.trim();
   const body = response.encoding === "base64"
     ? `[base64 encoded body]\n\n${response.body || ""}`
     : response.body || "";
 
   return `${firstLine}\n${formatHeaders(response.headers)}\n\n${body}`;
+}
+
+function formatHttpVersion(value) {
+  const version = String(value || "HTTP/1.1").toLowerCase();
+  if (version === "h3" || version === "http/3" || version === "http/3.0") {
+    return "HTTP/3";
+  }
+  if (version === "h2" || version === "http/2" || version === "http/2.0") {
+    return "HTTP/2";
+  }
+  if (version === "http/1.0" || version === "http/1.1") {
+    return version.toUpperCase();
+  }
+  return value || "HTTP/1.1";
 }
 
 function formatHeaders(headers) {
