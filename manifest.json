@@ -14,11 +14,23 @@
   "host_permissions": [
     "<all_urls>"
   ],
+  "icons": {
+    "16": "Icons/interceptor-16.png",
+    "32": "Icons/interceptor-32.png",
+    "48": "Icons/interceptor-48.png",
+    "128": "Icons/interceptor-128.png"
+  },
   "devtools_page": "devtools.html",
   "background": {
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "Interceptor"
+    "default_title": "Interceptor",
+    "default_icon": {
+      "16": "Icons/interceptor-16.png",
+      "32": "Icons/interceptor-32.png",
+      "48": "Icons/interceptor-48.png",
+      "128": "Icons/interceptor-128.png"
+    }
   }
 }
