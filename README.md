@@ -7,8 +7,9 @@ Interceptor is a Chrome/Chromium DevTools extension Vibe Coded for authorized we
 ## Features
 
 - DevTools panel for Chrome and Chromium.
-- Request history with method, status, URL, timestamp, filtering, sorting, highlighting, and URL actions.
-- Raw request and response viewers.
+- Light and dark themes with a toolbar toggle.
+- Request history with method, status, URL, timestamp, `and`/`or` filtering, sorting, highlighting, and URL actions.
+- Raw request and response viewers with local search and editor context menus.
 - Multi-tab repeater with editable raw requests and saved responses.
 - Request and response interception with editable raw messages.
 - URL allow-list for Intercept mode.
@@ -55,6 +56,14 @@ The top-left mode selector has:
 
 The toolbar **Pause/Resume** button pauses or resumes passive history capture while you are in Capturing mode.
 
+The right side of the toolbar uses icon buttons for:
+
+- Theme toggle.
+- Download project.
+- Upload project.
+- Pause/resume capture.
+- Clear history.
+
 ## History
 
 History shows:
@@ -70,9 +79,18 @@ You can:
 - Click column headers to sort ascending/descending.
 - Drag the `|` separators in the header to resize columns.
 - Use the **Extensions** menu to hide or show common static file types.
+- Use `and` / `or` in the filter field to combine multiple terms.
 - Resize the History pane using the splitter between History and details.
 - Resize the Request/Response detail panes with the horizontal splitter.
 - Scroll horizontally when content is wider than the panel.
+
+Filter examples:
+
+- `api and login`: show entries containing both `api` and `login`.
+- `login or users`: show entries containing either `login` or `users`.
+- `api and login or users`: show entries matching `api + login`, or entries matching `users`.
+- `api !google.com`: show entries containing `api` but excluding `google.com`.
+- `'api/login' or 'api/users'`: quote terms that contain special spacing or punctuation.
 
 Right-click a non-URL part of a row to highlight the item:
 
@@ -99,6 +117,23 @@ Selecting a history item displays:
 
 HTTP/2 pseudo-headers such as `:authority`, `:method`, `:path`, and `:scheme` are filtered from raw request text because they are browser-managed pseudo-headers, not editable raw HTTP headers.
 
+When a request or response editor is focused:
+
+- Press `Ctrl+F` or `Cmd+F` to search inside that editor only.
+- Press `Enter` to jump to the next match.
+- Press `Shift+Enter` to jump to the previous match.
+- Press `Esc` to close editor search.
+
+Right-click request editors for editor actions:
+
+- With selected text: **Copy**; **Paste** when the editor is editable.
+- Without selected text: **Copy All**, **Paste All** when editable, **Select All**, **Download Request**, **Send to Repeater**.
+
+Right-click response editors for editor actions:
+
+- With selected text: **Copy**.
+- Without selected text: **Copy All**, **Select All**, **Download Response**.
+
 ## Repeater
 
 Click **Send to Repeater** from a selected history item to create a new repeater tab.
@@ -122,6 +157,7 @@ In Intercept mode:
 
 - The left pane changes from History to the **Intercept** URL list.
 - The top action buttons become **Enabled/Disabled**, **Forward**, and **Drop**.
+- Interception starts disabled by default when you enter Intercept mode.
 - If the Intercept URL list is empty, all requests/responses are intercepted.
 - If the Intercept URL list contains one or more URLs, only exact matching URLs are intercepted.
 
@@ -147,7 +183,7 @@ In the Intercept URL list:
 
 ## Projects
 
-Use **Download Project** to save your current work as JSON.
+Use the toolbar download icon to save your current work as JSON.
 
 The project file includes:
 
@@ -157,7 +193,7 @@ The project file includes:
 
 The project file does **not** save Intercept mode state or Intercept URL lists.
 
-Use **Upload Project** to restore a saved project JSON file.
+Use the toolbar upload icon to restore a saved project JSON file.
 
 ## Browser Notes And Limitations
 
@@ -165,6 +201,7 @@ Use **Upload Project** to restore a saved project JSON file.
 - Interception uses Chrome’s `debugger` API and requires accepting the debugger permission.
 - Blocking uses Chrome dynamic declarative network request rules.
 - Repeater requests are sent by the extension background worker, so browser security rules still apply.
+- Clipboard paste from editor context menus requires clipboard read permission.
 - Some compressed/binary response bodies may not be convenient to edit as text.
 
 ## Troubleshooting
