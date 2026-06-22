@@ -65,14 +65,26 @@ const state = {
   urlMenuTargetId: null,
   blockedUrls: new Set(),
   interceptUrls: new Set(),
-  interceptEnabled: true,
+  interceptEnabled: false,
   interceptPollId: null,
   pausedInterceptId: null,
-  interceptMenuTargetUrl: null
+  interceptMenuTargetUrl: null,
+  editorMenuTarget: null,
+  theme: "dark"
+};
+
+const findState = {
+  editor: null,
+  bar: null,
+  input: null,
+  count: null,
+  matches: [],
+  index: -1
 };
 
 const els = {
   modeSelect: document.querySelector("#modeSelect"),
+  themeToggle: document.querySelector("#themeToggle"),
   downloadProject: document.querySelector("#downloadProject"),
   uploadProject: document.querySelector("#uploadProject"),
   projectFile: document.querySelector("#projectFile"),
@@ -89,6 +101,7 @@ const els = {
   highlightMenu: document.querySelector("#highlightMenu"),
   urlMenu: document.querySelector("#urlMenu"),
   interceptUrlMenu: document.querySelector("#interceptUrlMenu"),
+  editorMenu: document.querySelector("#editorMenu"),
   urlInterceptAction: document.querySelector("#urlInterceptAction"),
   urlBlockAction: document.querySelector("#urlBlockAction"),
   workspace: document.querySelector(".workspace"),
@@ -153,11 +166,15 @@ els.toggleCapture.addEventListener("click", () => {
     return;
   }
   state.capturing = !state.capturing;
-  els.toggleCapture.textContent = state.capturing ? "Pause" : "Resume";
+  renderCaptureToggle();
 });
 
 els.modeSelect.addEventListener("change", () => {
   setMode(els.modeSelect.value);
+});
+
+els.themeToggle.addEventListener("click", () => {
+  setTheme(state.theme === "light" ? "dark" : "light", true);
 });
 
 els.clearHistory.addEventListener("click", () => {
@@ -236,18 +253,23 @@ els.interceptUrlMenu.addEventListener("click", async (event) => {
   hideInterceptUrlMenu();
 });
 
+els.editorMenu.addEventListener("click", handleEditorMenuClick);
+
 document.addEventListener("click", () => {
   hideHighlightMenu();
   hideUrlMenu();
   hideInterceptUrlMenu();
+  hideEditorMenu();
 });
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     hideHighlightMenu();
     hideUrlMenu();
     hideInterceptUrlMenu();
+    hideEditorMenu();
   }
 });
+document.addEventListener("keydown", handleEditorFindShortcut, true);
 
 els.downloadProject.addEventListener("click", downloadProject);
 
@@ -265,7 +287,9 @@ els.sendToRepeater.addEventListener("click", () => {
   sendEntryToRepeater(entry);
 });
 
-els.sendRequest.addEventListener("click", async () => {
+els.sendRequest.addEventListener("click", sendActiveRepeaterRequest);
+
+async function sendActiveRepeaterRequest() {
   const tab = activeRepeaterTab();
   if (!tab) {
     return;
@@ -292,7 +316,7 @@ els.sendRequest.addEventListener("click", async () => {
   }
 
   renderRepeaterEditors();
-});
+}
 
 els.interceptToggle.addEventListener("click", async () => {
   await setInterceptEnabled(!state.interceptEnabled);
@@ -304,6 +328,7 @@ els.interceptRequest.addEventListener("input", () => updateEditorHighlight(els.i
 for (const editor of els.rawEditors) {
   editor.addEventListener("input", () => updateEditorHighlight(editor));
   editor.addEventListener("scroll", () => syncEditorScroll(editor));
+  editor.addEventListener("contextmenu", showEditorContextMenu);
 }
 
 els.repeaterResizeHandle.addEventListener("pointerdown", startRepeaterResize);
@@ -332,7 +357,7 @@ async function setMode(mode) {
   document.querySelector(".app").classList.toggle("intercept-mode", mode === "intercept");
   els.modeSelect.value = mode;
   state.capturing = mode === "capturing" || mode === "intercept";
-  els.toggleCapture.textContent = state.capturing ? "Pause" : "Resume";
+  renderCaptureToggle();
   renderModeLayout();
 
   if (mode === "intercept") {
@@ -345,6 +370,30 @@ async function setMode(mode) {
   if (state.activeView === "intercept") {
     switchView("detail");
   }
+}
+
+function setTheme(theme, persist = false) {
+  state.theme = theme === "light" ? "light" : "dark";
+  document.documentElement.dataset.theme = state.theme;
+  els.themeToggle.classList.toggle("light", state.theme === "light");
+  els.themeToggle.title = state.theme === "light" ? "Switch to dark theme" : "Switch to light theme";
+  els.themeToggle.setAttribute("aria-label", els.themeToggle.title);
+
+  if (persist) {
+    chrome.storage.local.set({ interceptorTheme: state.theme }).catch(() => {});
+  }
+}
+
+function renderCaptureToggle() {
+  els.toggleCapture.classList.toggle("pause", state.capturing);
+  els.toggleCapture.classList.toggle("play", !state.capturing);
+  els.toggleCapture.title = state.capturing ? "Pause capture" : "Resume capture";
+  els.toggleCapture.setAttribute("aria-label", els.toggleCapture.title);
+}
+
+async function restoreTheme() {
+  const stored = await chrome.storage.local.get("interceptorTheme").catch(() => ({}));
+  setTheme(stored.interceptorTheme || "dark");
 }
 
 async function startInterceptMode() {
@@ -552,30 +601,70 @@ function renderHistory() {
 }
 
 function parseHistoryFilter(value) {
-  const include = [];
-  const exclude = [];
-  const pattern = /(!)?\s*'([^']*)'|(!)?\s*"([^"]*)"|(!)?\s*([^&\s]+)/g;
-  let match;
+  const groups = [];
+  let current = createHistoryFilterGroup();
 
-  while ((match = pattern.exec(value || ""))) {
-    const negated = Boolean(match[1] || match[3] || match[5]);
-    const term = (match[2] || match[4] || match[6] || "").trim().toLowerCase();
-    if (!term) {
+  for (const token of tokenizeHistoryFilter(value)) {
+    if (!token.negated && token.value === "or") {
+      pushHistoryFilterGroup(groups, current);
+      current = createHistoryFilterGroup();
       continue;
     }
-    if (negated) {
-      exclude.push(term);
+
+    if (!token.negated && token.value === "and") {
+      continue;
+    }
+
+    if (token.negated) {
+      current.exclude.push(token.value);
     } else {
-      include.push(term);
+      current.include.push(token.value);
     }
   }
 
-  return { include, exclude };
+  pushHistoryFilterGroup(groups, current);
+  return { groups };
 }
 
 function matchesHistoryFilter(haystack, filter) {
-  return filter.include.every((term) => haystack.includes(term))
-    && filter.exclude.every((term) => !haystack.includes(term));
+  if (!filter.groups.length) {
+    return true;
+  }
+
+  return filter.groups.some((group) => {
+    return group.include.every((term) => haystack.includes(term))
+      && group.exclude.every((term) => !haystack.includes(term));
+  });
+}
+
+function tokenizeHistoryFilter(value) {
+  const tokens = [];
+  const pattern = /\s*(!)?(?:'([^']*)'|"([^"]*)"|([^&\s]+))/g;
+  let match;
+
+  while ((match = pattern.exec(value || ""))) {
+    const negated = Boolean(match[1]);
+    const rawTerm = (match[2] || match[3] || match[4] || "").trim();
+    const value = rawTerm.toLowerCase();
+    if (value) {
+      tokens.push({ value, negated });
+    }
+  }
+
+  return tokens;
+}
+
+function createHistoryFilterGroup() {
+  return {
+    include: [],
+    exclude: []
+  };
+}
+
+function pushHistoryFilterGroup(groups, group) {
+  if (group.include.length || group.exclude.length) {
+    groups.push(group);
+  }
 }
 
 function addHistoryFilter(value, excluded) {
@@ -767,6 +856,195 @@ function showUrlMenu(clientX, clientY) {
 function hideUrlMenu() {
   els.urlMenu.hidden = true;
   state.urlMenuTargetId = null;
+}
+
+function showEditorContextMenu(event) {
+  const editor = event.currentTarget;
+  const kind = editorKind(editor);
+  if (!kind) {
+    return;
+  }
+
+  event.preventDefault();
+  hideHighlightMenu();
+  hideUrlMenu();
+  hideInterceptUrlMenu();
+
+  const hasSelection = editor.selectionStart !== editor.selectionEnd;
+  state.editorMenuTarget = { editor, kind, hasSelection };
+  renderEditorMenu(kind, hasSelection, editor.readOnly);
+  showPositionedMenu(els.editorMenu, event.clientX, event.clientY);
+}
+
+function renderEditorMenu(kind, hasSelection, readOnly) {
+  const actions = [];
+
+  if (kind === "request") {
+    if (hasSelection) {
+      actions.push(["copySelection", "Copy"]);
+      if (!readOnly) {
+        actions.push(["pasteSelection", "Paste"]);
+      }
+    } else {
+      actions.push(["copyAll", "Copy All"]);
+      if (!readOnly) {
+        actions.push(["pasteAll", "Paste All"]);
+      }
+      actions.push(["selectAll", "Select All"]);
+      actions.push(["download", "Download Request"]);
+      actions.push(["sendRepeater", "Send to Repeater"]);
+    }
+  } else if (kind === "response") {
+    if (hasSelection) {
+      actions.push(["copySelection", "Copy"]);
+    } else {
+      actions.push(["copyAll", "Copy All"]);
+      actions.push(["selectAll", "Select All"]);
+      actions.push(["download", "Download Response"]);
+    }
+  }
+
+  els.editorMenu.replaceChildren(...actions.map(([action, label]) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.action = action;
+    button.textContent = label;
+    return button;
+  }));
+}
+
+async function handleEditorMenuClick(event) {
+  const button = event.target.closest("button[data-action]");
+  const target = state.editorMenuTarget;
+  if (!button || !target) {
+    return;
+  }
+
+  const { editor, kind } = target;
+  const action = button.dataset.action;
+
+  try {
+    if (action === "copySelection") {
+      await copyText(selectedEditorText(editor));
+    } else if (action === "copyAll") {
+      await copyText(editor.value);
+    } else if (action === "pasteSelection") {
+      replaceEditorSelection(editor, await readClipboardText());
+    } else if (action === "pasteAll") {
+      replaceEditorAll(editor, await readClipboardText());
+    } else if (action === "selectAll") {
+      editor.focus();
+      editor.select();
+    } else if (action === "download") {
+      downloadTextFile(editor.value, `${kind}-${timestampForFilename()}.txt`);
+    } else if (action === "sendRepeater") {
+      sendRequestEditorToRepeater(editor);
+    }
+  } catch (error) {
+    window.alert(error.message || String(error));
+  }
+
+  hideEditorMenu();
+}
+
+function hideEditorMenu() {
+  els.editorMenu.hidden = true;
+  state.editorMenuTarget = null;
+}
+
+function editorKind(editor) {
+  if ([els.requestText, els.repeaterRequest, els.interceptRequest].includes(editor)) {
+    return "request";
+  }
+  if ([els.responseText, els.repeaterResponse].includes(editor)) {
+    return "response";
+  }
+  return "";
+}
+
+function selectedEditorText(editor) {
+  return editor.value.slice(editor.selectionStart, editor.selectionEnd);
+}
+
+async function readClipboardText() {
+  if (navigator.clipboard?.readText) {
+    return await navigator.clipboard.readText();
+  }
+  throw new Error("Clipboard read is not available.");
+}
+
+function replaceEditorSelection(editor, value) {
+  const start = editor.selectionStart;
+  const end = editor.selectionEnd;
+  editor.value = `${editor.value.slice(0, start)}${value}${editor.value.slice(end)}`;
+  editor.setSelectionRange(start, start + value.length);
+  editor.dispatchEvent(new Event("input", { bubbles: true }));
+  updateEditorHighlight(editor);
+}
+
+function replaceEditorAll(editor, value) {
+  editor.value = value;
+  editor.setSelectionRange(0, editor.value.length);
+  editor.dispatchEvent(new Event("input", { bubbles: true }));
+  updateEditorHighlight(editor);
+}
+
+function sendRequestEditorToRepeater(editor) {
+  if (editor === els.requestText) {
+    const entry = selectedEntry();
+    if (entry) {
+      sendEntryToRepeater(entry);
+      return;
+    }
+  }
+
+  syncActiveRepeaterTab();
+  const tab = createRepeaterTabFromRawRequest(editor.value);
+  state.repeaterTabs.push(tab);
+  state.activeRepeaterId = tab.id;
+  renderRepeater();
+  switchView("repeater");
+}
+
+function createRepeaterTabFromRawRequest(rawText) {
+  const request = parseRawRequest(rawText);
+  const url = new URL(request.url);
+  return {
+    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    title: `${request.method} ${url.pathname || "/"}`,
+    sourceEntryId: null,
+    requestText: rawText,
+    responseText: "",
+    meta: "Not sent",
+    requestPaneSize: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function downloadTextFile(text, filename) {
+  const blob = new Blob([text], { type: "text/plain" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function timestampForFilename() {
+  return new Date().toISOString().replace(/[:.]/g, "-");
+}
+
+function showPositionedMenu(menu, clientX, clientY) {
+  menu.hidden = false;
+  const rect = menu.getBoundingClientRect();
+  const left = Math.min(clientX, window.innerWidth - rect.width - 8);
+  const top = Math.min(clientY, window.innerHeight - rect.height - 8);
+  menu.style.left = `${Math.max(8, left)}px`;
+  menu.style.top = `${Math.max(8, top)}px`;
 }
 
 async function copyText(value) {
@@ -1334,6 +1612,212 @@ function updateAllEditorHighlights() {
   }
 }
 
+function handleEditorFindShortcut(event) {
+  if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "f") {
+    return;
+  }
+
+  const editor = editorFromFindEvent(event);
+  if (!editor) {
+    return;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+  event.stopImmediatePropagation();
+  openEditorFind(editor);
+}
+
+function editorFromFindEvent(event) {
+  if (els.rawEditors.includes(event.target)) {
+    return event.target;
+  }
+
+  if (findState.input && event.target === findState.input) {
+    return findState.editor;
+  }
+
+  return null;
+}
+
+function openEditorFind(editor) {
+  if (findState.editor !== editor) {
+    closeEditorFind();
+  }
+
+  if (!findState.bar) {
+    createEditorFindBar(editor);
+  }
+
+  findState.editor = editor;
+  editor.closest(".highlight-editor")?.classList.add("find-open");
+  findState.bar.hidden = false;
+
+  const selectedText = editor.selectionStart !== editor.selectionEnd
+    ? editor.value.slice(editor.selectionStart, editor.selectionEnd)
+    : "";
+  if (selectedText && !selectedText.includes("\n")) {
+    findState.input.value = selectedText;
+  }
+
+  updateEditorFindMatches();
+  findState.input.focus();
+  findState.input.select();
+}
+
+function createEditorFindBar(editor) {
+  const wrapper = editor.closest(".highlight-editor");
+  if (!wrapper) {
+    return;
+  }
+
+  const bar = document.createElement("div");
+  bar.className = "editor-find-bar";
+  bar.hidden = true;
+
+  const input = document.createElement("input");
+  input.type = "search";
+  input.placeholder = "Find";
+  input.autocomplete = "off";
+  input.spellcheck = false;
+
+  const count = document.createElement("span");
+  count.className = "editor-find-count";
+  count.textContent = "0/0";
+
+  const previous = document.createElement("button");
+  previous.type = "button";
+  previous.className = "editor-find-button";
+  previous.title = "Previous match";
+  previous.textContent = "Prev";
+
+  const next = document.createElement("button");
+  next.type = "button";
+  next.className = "editor-find-button";
+  next.title = "Next match";
+  next.textContent = "Next";
+
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "editor-find-button";
+  close.title = "Close search";
+  close.textContent = "x";
+
+  bar.addEventListener("mousedown", (event) => event.stopPropagation());
+  input.addEventListener("input", updateEditorFindMatches);
+  input.addEventListener("keydown", handleEditorFindKeydown);
+  previous.addEventListener("click", () => moveEditorFind(-1, true));
+  next.addEventListener("click", () => moveEditorFind(1, true));
+  close.addEventListener("click", closeEditorFind);
+
+  bar.append(input, count, previous, next, close);
+  wrapper.append(bar);
+
+  findState.bar = bar;
+  findState.input = input;
+  findState.count = count;
+}
+
+function handleEditorFindKeydown(event) {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    moveEditorFind(event.shiftKey ? -1 : 1, true);
+    return;
+  }
+
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeEditorFind();
+  }
+}
+
+function updateEditorFindMatches() {
+  const editor = findState.editor;
+  const query = findState.input?.value || "";
+  findState.matches = [];
+  findState.index = -1;
+
+  if (!editor || !query) {
+    updateEditorFindCount();
+    return;
+  }
+
+  const haystack = editor.value.toLowerCase();
+  const needle = query.toLowerCase();
+  let fromIndex = 0;
+  while (fromIndex <= haystack.length) {
+    const index = haystack.indexOf(needle, fromIndex);
+    if (index < 0) {
+      break;
+    }
+    findState.matches.push(index);
+    fromIndex = index + Math.max(needle.length, 1);
+  }
+
+  if (findState.matches.length) {
+    const caret = editor.selectionStart || 0;
+    findState.index = findState.matches.findIndex((match) => match >= caret);
+    if (findState.index < 0) {
+      findState.index = 0;
+    }
+    selectEditorFindMatch(false);
+  }
+
+  updateEditorFindCount();
+}
+
+function moveEditorFind(direction, focusEditor) {
+  if (!findState.matches.length) {
+    updateEditorFindMatches();
+    return;
+  }
+
+  findState.index = (findState.index + direction + findState.matches.length) % findState.matches.length;
+  selectEditorFindMatch(focusEditor);
+  updateEditorFindCount();
+}
+
+function selectEditorFindMatch(focusEditor) {
+  const editor = findState.editor;
+  const query = findState.input?.value || "";
+  const start = findState.matches[findState.index];
+  if (!editor || start === undefined || !query) {
+    return;
+  }
+
+  editor.setSelectionRange(start, start + query.length);
+  editor.scrollTop = editor.scrollTop;
+  if (focusEditor) {
+    editor.focus();
+  }
+}
+
+function updateEditorFindCount() {
+  if (!findState.count) {
+    return;
+  }
+
+  const total = findState.matches.length;
+  findState.count.textContent = total ? `${findState.index + 1}/${total}` : "0/0";
+}
+
+function closeEditorFind() {
+  if (!findState.bar) {
+    return;
+  }
+
+  findState.bar.hidden = true;
+  findState.editor?.closest(".highlight-editor")?.classList.remove("find-open");
+  findState.editor?.focus();
+  findState.editor = null;
+  findState.input = null;
+  findState.count = null;
+  findState.bar.remove();
+  findState.bar = null;
+  findState.matches = [];
+  findState.index = -1;
+}
+
 function updateEditorHighlight(editor) {
   const layer = editor.previousElementSibling;
   if (!layer?.classList.contains("highlight-layer")) {
@@ -1857,10 +2341,15 @@ async function initializeDebuggerSession() {
   }).catch(() => {});
 }
 
-renderExtensionFilters();
-applyLayoutSizes();
-renderHistory();
-renderDetail();
-renderRepeater();
-updateAllEditorHighlights();
-initializeDebuggerSession();
+async function initializePanel() {
+  await restoreTheme();
+  renderExtensionFilters();
+  applyLayoutSizes();
+  renderHistory();
+  renderDetail();
+  renderRepeater();
+  updateAllEditorHighlights();
+  initializeDebuggerSession();
+}
+
+initializePanel();

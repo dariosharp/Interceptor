@@ -3,18 +3,72 @@
   --bg: #101114;
   --panel: #17191f;
   --panel-strong: #20242c;
+  --surface: #12151a;
+  --surface-raised: #151922;
+  --editor-bg: #0d0f13;
+  --control-bg: #0e1117;
+  --control-hover: #18202b;
+  --control-border: #334155;
+  --checkbox-border: #526071;
+  --checkbox-bg: #090c11;
+  --checkbox-inset: #0e1117;
   --line: #343946;
+  --row-line: rgba(52, 57, 70, 0.75);
   --text: #eef1f6;
   --muted: #a9b0bd;
   --accent: #4fb286;
   --accent-strong: #72c7a0;
   --danger: #e26d5a;
   --focus: #86b7ff;
+  --shadow: rgba(0, 0, 0, 0.35);
+  --active-row: rgba(79, 178, 134, 0.18);
+  --highlight-red: rgba(226, 109, 90, 0.28);
+  --highlight-yellow: rgba(218, 181, 72, 0.28);
+  --highlight-blue: rgba(86, 155, 214, 0.28);
+  --highlight-green: rgba(79, 178, 134, 0.28);
+  --highlight-purple: rgba(166, 115, 201, 0.3);
+  --selection: rgba(134, 183, 255, 0.35);
   --header-name: #8bd3ff;
   --header-value: #f2c078;
   --param-name: #72c7a0;
   --param-value: #d7b4ff;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f4f6f8;
+  --panel: #ffffff;
+  --panel-strong: #eef2f6;
+  --surface: #f8fafc;
+  --surface-raised: #ffffff;
+  --editor-bg: #ffffff;
+  --control-bg: #ffffff;
+  --control-hover: #eef6ff;
+  --control-border: #b8c3d1;
+  --checkbox-border: #9aa8b8;
+  --checkbox-bg: #ffffff;
+  --checkbox-inset: #ffffff;
+  --line: #ccd5df;
+  --row-line: rgba(190, 201, 213, 0.9);
+  --text: #17202a;
+  --muted: #5f6f82;
+  --accent: #167a57;
+  --accent-strong: #0f6b4d;
+  --danger: #b9382d;
+  --focus: #2563eb;
+  --shadow: rgba(15, 23, 42, 0.16);
+  --active-row: rgba(22, 122, 87, 0.13);
+  --highlight-red: rgba(226, 109, 90, 0.22);
+  --highlight-yellow: rgba(218, 181, 72, 0.26);
+  --highlight-blue: rgba(86, 155, 214, 0.22);
+  --highlight-green: rgba(79, 178, 134, 0.22);
+  --highlight-purple: rgba(166, 115, 201, 0.22);
+  --selection: rgba(37, 99, 235, 0.24);
+  --header-name: #075985;
+  --header-value: #9a5a00;
+  --param-name: #0f6b4d;
+  --param-value: #6d3aa8;
 }
 
 * {
@@ -67,6 +121,81 @@ select {
 
 button:hover {
   border-color: var(--accent);
+}
+
+.toolbar-icon {
+  width: 32px;
+  min-width: 32px;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+}
+
+.icon-theme,
+.icon-download,
+.icon-upload,
+.icon-clear {
+  width: 18px;
+  height: 18px;
+  display: block;
+  background: currentColor;
+  -webkit-mask: var(--icon-mask) center / contain no-repeat;
+  mask: var(--icon-mask) center / contain no-repeat;
+}
+
+.icon-theme {
+  --icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cpath d='M256 0a32 32 0 0 1 32 32v48a32 32 0 0 1-64 0V32a32 32 0 0 1 32-32Zm0 384a32 32 0 0 1 32 32v64a32 32 0 0 1-64 0v-64a32 32 0 0 1 32-32ZM96 256a32 32 0 0 1-32 32H32a32 32 0 0 1 0-64h32a32 32 0 0 1 32 32Zm384-32a32 32 0 0 1 0 64h-32a32 32 0 0 1 0-64h32ZM91 91a32 32 0 0 1 45 0l34 34a32 32 0 0 1-45 45l-34-34a32 32 0 0 1 0-45Zm296 251 34 34a32 32 0 0 1-45 45l-34-34a32 32 0 0 1 45-45ZM421 91a32 32 0 0 1 0 45l-34 34a32 32 0 0 1-45-45l34-34a32 32 0 0 1 45 0ZM170 342a32 32 0 0 1 0 45l-34 34a32 32 0 0 1-45-45l34-34a32 32 0 0 1 45 0ZM256 128a128 128 0 1 1 0 256 128 128 0 0 1 0-256Z'/%3E%3C/svg%3E");
+}
+
+.theme-toggle.light .icon-theme {
+  --icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cpath d='M368 384c-97 0-176-79-176-176 0-55 25-104 64-136C144 85 56 180 56 296c0 124 100 224 224 224 116 0 211-88 224-200-32 39-81 64-136 64Z'/%3E%3C/svg%3E");
+}
+
+.icon-download {
+  --icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cpath d='M224 32h64v248l83-83 45 45-160 160L96 242l45-45 83 83V32ZM48 352h64v64h288v-64h64v96a32 32 0 0 1-32 32H80a32 32 0 0 1-32-32v-96Z'/%3E%3C/svg%3E");
+}
+
+.icon-upload {
+  --icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cpath d='M224 384V136l-83 83-45-45L256 14l160 160-45 45-83-83v248h-64ZM48 320h64v64h288v-64h64v96a32 32 0 0 1-32 32H80a32 32 0 0 1-32-32v-96Z'/%3E%3C/svg%3E");
+}
+
+.icon-clear {
+  --icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cpath d='M176 32h160l16 48h112v64H48V80h112l16-48Zm-64 144h288l-24 304H136L112 176Zm80 56v192h48V232h-48Zm80 0v192h48V232h-48Z'/%3E%3C/svg%3E");
+}
+
+.capture-toggle span {
+  position: relative;
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+.capture-toggle.pause span::before,
+.capture-toggle.pause span::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  width: 5px;
+  height: 12px;
+  background: currentColor;
+  border-radius: 2px;
+}
+
+.capture-toggle.pause span::before {
+  left: 2px;
+}
+
+.capture-toggle.pause span::after {
+  right: 2px;
+}
+
+.capture-toggle.play span {
+  width: 0;
+  height: 0;
+  border-top: 8px solid transparent;
+  border-bottom: 8px solid transparent;
+  border-left: 13px solid currentColor;
+  transform: translateX(2px);
 }
 
 button:focus-visible,
@@ -135,7 +264,7 @@ textarea:focus-visible {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: #12151a;
+  background: var(--surface);
   overflow: hidden;
 }
 
@@ -210,9 +339,9 @@ textarea:focus-visible {
   overflow: auto;
   border: 1px solid var(--line);
   border-radius: 6px;
-  background: #151922;
+  background: var(--surface-raised);
   padding: 10px;
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 12px 30px var(--shadow);
 }
 
 .extension-filter-title {
@@ -243,13 +372,13 @@ textarea:focus-visible {
   padding: 0 8px;
   border: 1px solid transparent;
   border-radius: 6px;
-  background: #0e1117;
+  background: var(--control-bg);
   cursor: pointer;
 }
 
 .extension-filter-option:hover {
-  border-color: #334155;
-  background: #18202b;
+  border-color: var(--control-border);
+  background: var(--control-hover);
 }
 
 .extension-filter-option input {
@@ -258,15 +387,15 @@ textarea:focus-visible {
   height: 16px;
   flex: 0 0 16px;
   margin: 0;
-  border: 1px solid #526071;
+  border: 1px solid var(--checkbox-border);
   border-radius: 4px;
-  background: #090c11;
+  background: var(--checkbox-bg);
 }
 
 .extension-filter-option input:checked {
   border-color: var(--accent);
   background: var(--accent);
-  box-shadow: inset 0 0 0 3px #0e1117;
+  box-shadow: inset 0 0 0 3px var(--control-bg);
 }
 
 .extension-filter-option input:focus-visible {
@@ -309,7 +438,7 @@ textarea:focus-visible {
   position: sticky;
   top: 0;
   z-index: 2;
-  background: #12151a;
+  background: var(--surface);
 }
 
 .history-cell {
@@ -359,7 +488,7 @@ textarea:focus-visible {
   width: 100%;
   min-height: 34px;
   border: 0;
-  border-bottom: 1px solid rgba(52, 57, 70, 0.75);
+  border-bottom: 1px solid var(--row-line);
   border-radius: 0;
   background: transparent;
   text-align: left;
@@ -367,27 +496,27 @@ textarea:focus-visible {
 }
 
 .request-row.active {
-  background: rgba(79, 178, 134, 0.18);
+  background: var(--active-row);
 }
 
 .request-row.highlight-red {
-  background: rgba(226, 109, 90, 0.28);
+  background: var(--highlight-red);
 }
 
 .request-row.highlight-yellow {
-  background: rgba(218, 181, 72, 0.28);
+  background: var(--highlight-yellow);
 }
 
 .request-row.highlight-blue {
-  background: rgba(86, 155, 214, 0.28);
+  background: var(--highlight-blue);
 }
 
 .request-row.highlight-green {
-  background: rgba(79, 178, 134, 0.28);
+  background: var(--highlight-green);
 }
 
 .request-row.highlight-purple {
-  background: rgba(166, 115, 201, 0.3);
+  background: var(--highlight-purple);
 }
 
 .request-row.active.highlight-red,
@@ -435,7 +564,7 @@ textarea:focus-visible {
   border-radius: 6px;
   background: var(--panel);
   padding: 6px;
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 12px 30px var(--shadow);
 }
 
 .highlight-menu button,
@@ -451,7 +580,7 @@ textarea:focus-visible {
 .url-menu button:hover,
 .highlight-menu button:focus-visible,
 .url-menu button:focus-visible {
-  background: rgba(79, 178, 134, 0.18);
+  background: var(--active-row);
   border-color: transparent;
 }
 
@@ -552,7 +681,7 @@ textarea:focus-visible {
   padding: 0 10px;
   border-bottom: 1px solid var(--line);
   color: var(--muted);
-  background: #12151a;
+  background: var(--surface);
 }
 
 .intercept-url-list {
@@ -569,7 +698,7 @@ textarea:focus-visible {
   align-items: center;
   gap: 8px;
   border: 0;
-  border-bottom: 1px solid rgba(52, 57, 70, 0.75);
+  border-bottom: 1px solid var(--row-line);
   border-radius: 0;
   background: transparent;
   color: var(--text);
@@ -632,7 +761,7 @@ textarea:focus-visible {
 .repeater-tabs {
   min-height: 40px;
   border-bottom: 1px solid var(--line);
-  background: #12151a;
+  background: var(--surface);
   padding: 5px 10px;
   overflow: hidden;
 }
@@ -774,7 +903,7 @@ textarea {
   width: 100%;
   resize: none;
   border: 0;
-  background: #0d0f13;
+  background: var(--editor-bg);
   color: var(--text);
   padding: 12px;
   line-height: 1.45;
@@ -788,7 +917,7 @@ textarea {
   flex: 1;
   min-height: 0;
   position: relative;
-  background: #0d0f13;
+  background: var(--editor-bg);
   overflow: hidden;
 }
 
@@ -816,14 +945,62 @@ textarea {
   z-index: 2;
 }
 
+.highlight-editor.find-open textarea,
+.highlight-editor.find-open .highlight-layer {
+  padding-top: 48px;
+}
+
 .highlight-editor textarea::selection {
-  background: rgba(134, 183, 255, 0.35);
+  background: var(--selection);
 }
 
 .highlight-layer {
   pointer-events: none;
   color: var(--text);
   z-index: 1;
+}
+
+.editor-find-bar {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(460px, calc(100% - 16px));
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  box-shadow: 0 12px 30px var(--shadow);
+}
+
+.editor-find-bar[hidden] {
+  display: none;
+}
+
+.editor-find-bar input {
+  width: 180px;
+  min-width: 80px;
+  min-height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--editor-bg);
+  color: var(--text);
+  padding: 0 8px;
+}
+
+.editor-find-count {
+  min-width: 44px;
+  color: var(--muted);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.editor-find-button {
+  min-height: 28px;
+  padding: 0 8px;
 }
 
 .tok-header-name {

@@ -17,10 +17,21 @@
           </select>
         </div>
         <div class="toolbar-actions">
-          <button id="downloadProject" type="button" title="Download captured history and repeater tabs">Download Project</button>
-          <button id="uploadProject" type="button" title="Upload a saved Interceptor project">Upload Project</button>
-          <button id="toggleCapture" type="button" title="Pause or resume capture">Pause</button>
-          <button id="clearHistory" type="button" title="Clear request history">Clear</button>
+          <button id="themeToggle" class="toolbar-icon theme-toggle" type="button" title="Switch to light theme" aria-label="Switch to light theme">
+            <span class="icon-theme" aria-hidden="true"></span>
+          </button>
+          <button id="downloadProject" class="toolbar-icon" type="button" title="Download captured history and repeater tabs" aria-label="Download captured history and repeater tabs">
+            <span class="icon-download" aria-hidden="true"></span>
+          </button>
+          <button id="uploadProject" class="toolbar-icon" type="button" title="Upload a saved Interceptor project" aria-label="Upload a saved Interceptor project">
+            <span class="icon-upload" aria-hidden="true"></span>
+          </button>
+          <button id="toggleCapture" class="toolbar-icon capture-toggle pause" type="button" title="Pause capture" aria-label="Pause capture">
+            <span aria-hidden="true"></span>
+          </button>
+          <button id="clearHistory" class="toolbar-icon" type="button" title="Clear request history" aria-label="Clear request history">
+            <span class="icon-clear" aria-hidden="true"></span>
+          </button>
           <input id="projectFile" type="file" accept="application/json,.json">
         </div>
       </header>
@@ -28,7 +39,7 @@
       <section class="workspace">
         <aside class="history-pane" aria-label="Request history">
           <div class="filters">
-            <input id="searchInput" type="search" placeholder="Filter or exclude: login !google.com !'facebook.com'">
+            <input id="searchInput" type="search" placeholder="Filter: api and login or users; exclude: !google.com">
             <details class="extension-filter">
               <summary>Extensions</summary>
               <div id="extensionFilterList" class="extension-filter-list"></div>
@@ -169,6 +180,7 @@
       <div id="interceptUrlMenu" class="url-menu" hidden>
         <button type="button" data-action="remove">Remove</button>
       </div>
+      <div id="editorMenu" class="url-menu editor-menu" hidden></div>
     </main>
     <script src="panel.js"></script>
   </body>
