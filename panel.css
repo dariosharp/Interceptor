@@ -584,6 +584,97 @@ textarea:focus-visible {
   border-color: transparent;
 }
 
+.editor-menu {
+  width: 168px;
+}
+
+.submenu-item {
+  position: relative;
+}
+
+.submenu-item > button::after {
+  content: ">";
+  margin-left: auto;
+  color: var(--muted);
+}
+
+.submenu {
+  position: absolute;
+  left: calc(100% + 6px);
+  top: 0;
+  width: 132px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  padding: 6px;
+  box-shadow: 0 12px 30px var(--shadow);
+}
+
+.editor-menu.submenu-up .submenu {
+  top: auto;
+  bottom: 0;
+}
+
+.submenu[hidden] {
+  display: none;
+}
+
+.submenu-item:hover .submenu,
+.submenu-item:focus-within .submenu {
+  display: block;
+}
+
+.decode-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.decode-dialog[hidden] {
+  display: none;
+}
+
+.decode-card {
+  width: min(620px, calc(100vw - 32px));
+  max-height: min(520px, calc(100vh - 32px));
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 18px 45px var(--shadow);
+  overflow: hidden;
+}
+
+.decode-head,
+.decode-actions {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.decode-actions {
+  justify-content: flex-end;
+  border-top: 1px solid var(--line);
+  border-bottom: 0;
+}
+
+#decodeOutput {
+  position: static;
+  min-height: 220px;
+  max-height: 390px;
+  background: var(--editor-bg);
+  color: var(--text);
+  -webkit-text-fill-color: var(--text);
+}
+
 .detail-pane {
   min-width: 0;
   min-height: 0;

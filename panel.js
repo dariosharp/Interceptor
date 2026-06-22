@@ -102,6 +102,11 @@ const els = {
   urlMenu: document.querySelector("#urlMenu"),
   interceptUrlMenu: document.querySelector("#interceptUrlMenu"),
   editorMenu: document.querySelector("#editorMenu"),
+  decodeDialog: document.querySelector("#decodeDialog"),
+  decodeTitle: document.querySelector("#decodeTitle"),
+  decodeOutput: document.querySelector("#decodeOutput"),
+  closeDecodeDialog: document.querySelector("#closeDecodeDialog"),
+  copyDecodedText: document.querySelector("#copyDecodedText"),
   urlInterceptAction: document.querySelector("#urlInterceptAction"),
   urlBlockAction: document.querySelector("#urlBlockAction"),
   workspace: document.querySelector(".workspace"),
@@ -254,6 +259,10 @@ els.interceptUrlMenu.addEventListener("click", async (event) => {
 });
 
 els.editorMenu.addEventListener("click", handleEditorMenuClick);
+els.closeDecodeDialog.addEventListener("click", hideDecodeDialog);
+els.copyDecodedText.addEventListener("click", async () => {
+  await copyText(els.decodeOutput.value);
+});
 
 document.addEventListener("click", () => {
   hideTransientMenus();
@@ -261,6 +270,7 @@ document.addEventListener("click", () => {
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     hideTransientMenus();
+    hideDecodeDialog();
   }
 });
 document.addEventListener("keydown", handleEditorFindShortcut, true);
@@ -856,6 +866,7 @@ function showEditorContextMenu(event) {
   state.editorMenuTarget = { editor, kind, hasSelection };
   renderEditorMenu(kind, hasSelection, editor.readOnly);
   showPositionedMenu(els.editorMenu, event.clientX, event.clientY);
+  updateEditorSubmenuDirection();
 }
 
 function renderEditorMenu(kind, hasSelection, readOnly) {
@@ -867,6 +878,7 @@ function renderEditorMenu(kind, hasSelection, readOnly) {
       if (!readOnly) {
         actions.push(["pasteSelection", "Paste"]);
       }
+      actions.push(["decode", "Decode as"]);
     } else {
       actions.push(["copyAll", "Copy All"]);
       if (!readOnly) {
@@ -879,6 +891,7 @@ function renderEditorMenu(kind, hasSelection, readOnly) {
   } else if (kind === "response") {
     if (hasSelection) {
       actions.push(["copySelection", "Copy"]);
+      actions.push(["decode", "Decode as"]);
     } else {
       actions.push(["copyAll", "Copy All"]);
       actions.push(["selectAll", "Select All"]);
@@ -886,13 +899,69 @@ function renderEditorMenu(kind, hasSelection, readOnly) {
     }
   }
 
-  els.editorMenu.replaceChildren(...actions.map(([action, label]) => {
+  els.editorMenu.replaceChildren(...actions.map(createEditorMenuItem));
+}
+
+function updateEditorSubmenuDirection() {
+  const decodeItem = els.editorMenu.querySelector(".submenu-item");
+  const submenu = els.editorMenu.querySelector(".submenu");
+  if (!decodeItem || !submenu) {
+    els.editorMenu.classList.remove("submenu-up");
+    return;
+  }
+
+  submenu.hidden = false;
+  const itemRect = decodeItem.getBoundingClientRect();
+  const submenuRect = submenu.getBoundingClientRect();
+  submenu.hidden = true;
+
+  const opensDownPastViewport = itemRect.top + submenuRect.height > window.innerHeight - 8;
+  const hasMoreSpaceAbove = itemRect.bottom > window.innerHeight / 2;
+  els.editorMenu.classList.toggle("submenu-up", opensDownPastViewport && hasMoreSpaceAbove);
+}
+
+function createEditorMenuItem([action, label]) {
+  if (action === "decode") {
+    const wrapper = document.createElement("div");
+    wrapper.className = "submenu-item";
+
     const button = document.createElement("button");
     button.type = "button";
-    button.dataset.action = action;
     button.textContent = label;
-    return button;
-  }));
+
+    const submenu = document.createElement("div");
+    submenu.className = "submenu";
+    submenu.hidden = true;
+    submenu.replaceChildren(
+      createDecodeMenuButton("base64", "Base64"),
+      createDecodeMenuButton("url", "URL"),
+      createDecodeMenuButton("jwt", "JWT")
+    );
+
+    wrapper.addEventListener("mouseenter", () => {
+      submenu.hidden = false;
+    });
+    wrapper.addEventListener("mouseleave", () => {
+      submenu.hidden = true;
+    });
+    wrapper.append(button, submenu);
+    return wrapper;
+  }
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.dataset.action = action;
+  button.textContent = label;
+  return button;
+}
+
+function createDecodeMenuButton(format, label) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.dataset.action = "decode";
+  button.dataset.format = format;
+  button.textContent = label;
+  return button;
 }
 
 async function handleEditorMenuClick(event) {
@@ -921,6 +990,8 @@ async function handleEditorMenuClick(event) {
       downloadTextFile(editor.value, `${kind}-${timestampForFilename()}.txt`);
     } else if (action === "sendRepeater") {
       sendRequestEditorToRepeater(editor);
+    } else if (action === "decode") {
+      showDecodedSelection(editor, button.dataset.format);
     }
   } catch (error) {
     window.alert(error.message || String(error));
@@ -946,6 +1017,69 @@ function editorKind(editor) {
 
 function selectedEditorText(editor) {
   return editor.value.slice(editor.selectionStart, editor.selectionEnd);
+}
+
+function showDecodedSelection(editor, format) {
+  const input = selectedEditorText(editor);
+  const decoded = decodeText(input, format);
+  const labels = {
+    base64: "Base64",
+    url: "URL",
+    jwt: "JWT"
+  };
+  els.decodeTitle.textContent = `Decoded ${labels[format] || "Text"}`;
+  els.decodeOutput.value = decoded;
+  els.decodeDialog.hidden = false;
+  els.decodeOutput.focus();
+  els.decodeOutput.select();
+}
+
+function hideDecodeDialog() {
+  els.decodeDialog.hidden = true;
+  els.decodeOutput.value = "";
+}
+
+function decodeText(value, format) {
+  if (format === "base64") {
+    return decodeBase64(value);
+  }
+  if (format === "url") {
+    return decodeUrlEncoded(value);
+  }
+  if (format === "jwt") {
+    return decodeJwt(value);
+  }
+  throw new Error("Unsupported decoder.");
+}
+
+function decodeBase64(value) {
+  const normalized = value.trim().replace(/\s+/g, "");
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+  const binary = atob(padded);
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
+function decodeUrlEncoded(value) {
+  return decodeURIComponent(value.replace(/\+/g, " "));
+}
+
+function decodeJwt(value) {
+  const token = value.trim();
+  const parts = token.split(".");
+  if (parts.length < 2) {
+    throw new Error("JWT must contain at least header and payload.");
+  }
+
+  const header = JSON.parse(decodeBase64Url(parts[0]));
+  const payload = JSON.parse(decodeBase64Url(parts[1]));
+  const signature = parts[2] || "";
+  return JSON.stringify({ header, payload, signature }, null, 2);
+}
+
+function decodeBase64Url(value) {
+  const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
+  return decodeBase64(base64);
 }
 
 async function readClipboardText() {

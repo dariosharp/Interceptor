@@ -181,6 +181,18 @@
         <button type="button" data-action="remove">Remove</button>
       </div>
       <div id="editorMenu" class="url-menu editor-menu" hidden></div>
+      <div id="decodeDialog" class="decode-dialog" hidden>
+        <div class="decode-card" role="dialog" aria-modal="true" aria-labelledby="decodeTitle">
+          <div class="decode-head">
+            <strong id="decodeTitle">Decoded Text</strong>
+            <button id="closeDecodeDialog" type="button" title="Close decoded text" aria-label="Close decoded text">x</button>
+          </div>
+          <textarea id="decodeOutput" spellcheck="false" readonly></textarea>
+          <div class="decode-actions">
+            <button id="copyDecodedText" type="button">Copy</button>
+          </div>
+        </div>
+      </div>
     </main>
     <script src="panel.js"></script>
   </body>
