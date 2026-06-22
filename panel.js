@@ -256,17 +256,11 @@ els.interceptUrlMenu.addEventListener("click", async (event) => {
 els.editorMenu.addEventListener("click", handleEditorMenuClick);
 
 document.addEventListener("click", () => {
-  hideHighlightMenu();
-  hideUrlMenu();
-  hideInterceptUrlMenu();
-  hideEditorMenu();
+  hideTransientMenus();
 });
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
-    hideHighlightMenu();
-    hideUrlMenu();
-    hideInterceptUrlMenu();
-    hideEditorMenu();
+    hideTransientMenus();
   }
 });
 document.addEventListener("keydown", handleEditorFindShortcut, true);
@@ -823,12 +817,7 @@ function historyUrlClass(url) {
 }
 
 function showHighlightMenu(clientX, clientY) {
-  els.highlightMenu.hidden = false;
-  const rect = els.highlightMenu.getBoundingClientRect();
-  const left = Math.min(clientX, window.innerWidth - rect.width - 8);
-  const top = Math.min(clientY, window.innerHeight - rect.height - 8);
-  els.highlightMenu.style.left = `${Math.max(8, left)}px`;
-  els.highlightMenu.style.top = `${Math.max(8, top)}px`;
+  showPositionedMenu(els.highlightMenu, clientX, clientY);
 }
 
 function hideHighlightMenu() {
@@ -845,12 +834,7 @@ function showUrlMenu(clientX, clientY) {
   els.urlBlockAction.dataset.action = blocked ? "unblock" : "block";
   els.urlBlockAction.textContent = blocked ? "Unblock" : "Block";
 
-  els.urlMenu.hidden = false;
-  const rect = els.urlMenu.getBoundingClientRect();
-  const left = Math.min(clientX, window.innerWidth - rect.width - 8);
-  const top = Math.min(clientY, window.innerHeight - rect.height - 8);
-  els.urlMenu.style.left = `${Math.max(8, left)}px`;
-  els.urlMenu.style.top = `${Math.max(8, top)}px`;
+  showPositionedMenu(els.urlMenu, clientX, clientY);
 }
 
 function hideUrlMenu() {
@@ -866,9 +850,7 @@ function showEditorContextMenu(event) {
   }
 
   event.preventDefault();
-  hideHighlightMenu();
-  hideUrlMenu();
-  hideInterceptUrlMenu();
+  hideTransientMenus();
 
   const hasSelection = editor.selectionStart !== editor.selectionEnd;
   state.editorMenuTarget = { editor, kind, hasSelection };
@@ -1023,7 +1005,14 @@ function createRepeaterTabFromRawRequest(rawText) {
 }
 
 function downloadTextFile(text, filename) {
-  const blob = new Blob([text], { type: "text/plain" });
+  downloadBlob(new Blob([text], { type: "text/plain" }), filename);
+}
+
+function downloadJsonFile(value, filename) {
+  downloadBlob(new Blob([JSON.stringify(value, null, 2)], { type: "application/json" }), filename);
+}
+
+function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -1197,17 +1186,19 @@ function editInterceptUrl(row, url) {
 }
 
 function showInterceptUrlMenu(clientX, clientY) {
-  els.interceptUrlMenu.hidden = false;
-  const rect = els.interceptUrlMenu.getBoundingClientRect();
-  const left = Math.min(clientX, window.innerWidth - rect.width - 8);
-  const top = Math.min(clientY, window.innerHeight - rect.height - 8);
-  els.interceptUrlMenu.style.left = `${Math.max(8, left)}px`;
-  els.interceptUrlMenu.style.top = `${Math.max(8, top)}px`;
+  showPositionedMenu(els.interceptUrlMenu, clientX, clientY);
 }
 
 function hideInterceptUrlMenu() {
   els.interceptUrlMenu.hidden = true;
   state.interceptMenuTargetUrl = null;
+}
+
+function hideTransientMenus() {
+  hideHighlightMenu();
+  hideUrlMenu();
+  hideInterceptUrlMenu();
+  hideEditorMenu();
 }
 
 function formatHistoryTime(value) {
@@ -2105,16 +2096,7 @@ function downloadProject() {
     repeaterTabs: state.repeaterTabs,
     activeRepeaterId: state.activeRepeaterId
   };
-  const blob = new Blob([JSON.stringify(project, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  link.href = url;
-  link.download = `interceptor-project-${timestamp}.json`;
-  document.body.append(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
+  downloadJsonFile(project, `interceptor-project-${timestampForFilename()}.json`);
 }
 
 async function uploadProject(event) {
