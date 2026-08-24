@@ -2,8 +2,6 @@
 
 Interceptor is a Chrome/Chromium DevTools extension Vibe Coded for authorized web application testing and pentesting. It captures request/response history while you browse, lets you send requests to editable repeater tabs, and provides a Burp-style intercept workflow for pausing, editing, forwarding, or dropping traffic.
 
-> Use Interceptor only on systems you own or have explicit permission to test.
-
 ## Features
 
 - DevTools panel for Chrome and Chromium.
