@@ -224,5 +224,3 @@ If response forwarding fails:
 
 - Check that the raw response status line looks like `HTTP/1.1 200 OK`.
 - Avoid manually setting `Content-Length`, `Transfer-Encoding`, or `Content-Encoding`; Interceptor filters these when forwarding edited responses.
-
-  
